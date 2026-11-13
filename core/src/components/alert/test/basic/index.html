@@ -14,7 +14,7 @@
     <script type="module" src="../../../../../dist/ionic/ionic.esm.js"></script>
   </head>
   <script type="module">
-    import { alertController, loadingController } from '../../../../dist/ionic/index.esm.js';
+    import { alertController, loadingController } from '../../../../../dist/ionic/index.esm.js';
     window.alertController = alertController;
     window.loadingController = loadingController;
   </script>
@@ -36,6 +36,9 @@
         <button class="expand" id="noMessage" onclick="presentAlertNoMessage()">Alert No Message</button>
         <button class="expand" id="asyncHandler" onclick="presentAlertAsyncHandler()">Alert Async Handler</button>
         <button class="expand" id="confirm" onclick="presentAlertConfirm()">Confirm</button>
+        <button class="expand" id="confirmLongText" onclick="presentAlertConfirmLongText()">
+          Confirm (long button text)
+        </button>
         <button class="expand" id="prompt" onclick="presentAlertPrompt()">Prompt</button>
         <button class="expand" id="radio" onclick="presentAlertRadio()">Radio</button>
         <button class="expand" id="checkbox" onclick="presentAlertCheckbox()">Checkbox</button>
@@ -135,6 +138,20 @@
         });
       }
 
+      function presentAlertConfirmLongText() {
+        openAlert({
+          header: 'Alert!',
+          buttons: [
+            {
+              text: 'Action Action Action Action',
+            },
+            {
+              text: 'Action',
+            },
+          ],
+        });
+      }
+
       function presentAlertPrompt() {
         openAlert({
           header: 'Prompt!',
@@ -173,11 +190,17 @@
               type: 'date',
               min: '2017-03-01',
               max: '2018-01-12',
+              // WebKit renders today's date in empty date inputs, so set
+              // a value to keep the screenshot from changing every day.
+              value: '2017-06-15',
             },
             // input date without min nor max
             {
               name: 'name5',
               type: 'date',
+              // WebKit renders today's date in empty date inputs, so set
+              // a value to keep the screenshot from changing every day.
+              value: '2020-09-24',
             },
             {
               name: 'name6',

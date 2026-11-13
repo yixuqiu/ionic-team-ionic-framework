@@ -1,8 +1,9 @@
 import type { ComponentInterface, EventEmitter } from '@stencil/core';
-import { Component, Element, Event, Host, Prop, Watch, State, h } from '@stencil/core';
+import { Component, Element, Event, Host, Prop, Watch, State, forceUpdate, h } from '@stencil/core';
+import type { AttributeController } from '@utils/attribute-controller';
+import { createAriaAttributeController, createTabindexController } from '@utils/attribute-controller';
 import type { AnchorInterface, ButtonInterface } from '@utils/element-interface';
-import type { Attributes } from '@utils/helpers';
-import { inheritAriaAttributes, hasShadowDom } from '@utils/helpers';
+import { hasShadowDom } from '@utils/helpers';
 import { printIonWarning } from '@utils/logging';
 import { createColorClasses, hostContext, openURL } from '@utils/theme';
 
@@ -34,7 +35,8 @@ export class Button implements ComponentInterface, AnchorInterface, ButtonInterf
   private inToolbar = false;
   private formButtonEl: HTMLButtonElement | null = null;
   private formEl: HTMLFormElement | null = null;
-  private inheritedAttributes: Attributes = {};
+  private ariaController?: AttributeController;
+  private tabindexController?: AttributeController;
 
   @Element() el!: HTMLElement;
 
@@ -174,9 +176,13 @@ export class Button implements ComponentInterface, AnchorInterface, ButtonInterf
 
       /**
        * If the form already has a rendered form button
-       * then do not append a new one again.
+       * then do not append a new one again. Sync the
+       * disabled state and type if it changes after button
+       * creation (e.g., runtime property updates).
        */
       if (formButtonEl !== null && formEl.contains(formButtonEl)) {
+        formButtonEl.disabled = this.disabled;
+        formButtonEl.type = this.type;
         return;
       }
 
@@ -195,7 +201,25 @@ export class Button implements ComponentInterface, AnchorInterface, ButtonInterf
     this.inToolbar = !!this.el.closest('ion-buttons');
     this.inListHeader = !!this.el.closest('ion-list-header');
     this.inItem = !!this.el.closest('ion-item') || !!this.el.closest('ion-item-divider');
-    this.inheritedAttributes = inheritAriaAttributes(this.el);
+
+    /**
+     * The ARIA state has to stay live, since `ion-input-password-toggle` rewrites
+     * `aria-label` and `aria-pressed` on its `ion-button` on every toggle. We keep
+     * `aria-disabled` out of the watch because the `<Host>` below renders it from the
+     * `disabled` prop and those writes would clobber a developer's value.
+     */
+    this.ariaController = createAriaAttributeController(this.el, () => forceUpdate(this), ['aria-disabled']);
+    this.tabindexController = createTabindexController(this.el, () => forceUpdate(this));
+  }
+
+  connectedCallback() {
+    this.ariaController?.init();
+    this.tabindexController?.init();
+  }
+
+  disconnectedCallback() {
+    this.ariaController?.destroy();
+    this.tabindexController?.destroy();
   }
 
   private get hasIconOnly() {
@@ -235,7 +259,7 @@ export class Button implements ComponentInterface, AnchorInterface, ButtonInterf
            * element with that id is not a form element.
            */
           printIonWarning(
-            `Form with selector: "#${form}" could not be found. Verify that the id is attached to a <form> element.`,
+            `[ion-button] - Form with selector: "#${form}" could not be found. Verify that the id is attached to a <form> element.`,
             this.el
           );
           return null;
@@ -246,7 +270,7 @@ export class Button implements ComponentInterface, AnchorInterface, ButtonInterf
          * element with that id could not be found in the DOM.
          */
         printIonWarning(
-          `Form with selector: "#${form}" could not be found. Verify that the id is correct and the form is rendered in the DOM.`,
+          `[ion-button] - Form with selector: "#${form}" could not be found. Verify that the id is correct and the form is rendered in the DOM.`,
           this.el
         );
         return null;
@@ -260,7 +284,7 @@ export class Button implements ComponentInterface, AnchorInterface, ButtonInterf
        * as the form attribute.
        */
       printIonWarning(
-        `The provided "form" element is invalid. Verify that the form is a HTMLFormElement and rendered in the DOM.`,
+        `[ion-button] - The provided "form" element is invalid. Verify that the form is a HTMLFormElement and rendered in the DOM.`,
         this.el
       );
       return null;
@@ -314,21 +338,11 @@ export class Button implements ComponentInterface, AnchorInterface, ButtonInterf
 
   render() {
     const mode = getIonMode(this);
-    const {
-      buttonType,
-      type,
-      disabled,
-      rel,
-      target,
-      size,
-      href,
-      color,
-      expand,
-      hasIconOnly,
-      shape,
-      strong,
-      inheritedAttributes,
-    } = this;
+    const { buttonType, type, disabled, rel, target, size, href, color, expand, hasIconOnly, shape, strong } = this;
+    const inheritedAttributes = {
+      ...this.ariaController?.attributes,
+      ...this.tabindexController?.attributes,
+    };
     const finalSize = size === undefined && this.inItem ? 'small' : size;
     const TagType = href === undefined ? 'button' : ('a' as any);
     const attrs =
@@ -341,11 +355,7 @@ export class Button implements ComponentInterface, AnchorInterface, ButtonInterf
             target,
           };
     let fill = this.fill;
-    /**
-     * We check both undefined and null to
-     * work around https://github.com/ionic-team/stencil/issues/3586.
-     */
-    if (fill == null) {
+    if (fill === undefined) {
       fill = this.inToolbar || this.inListHeader ? 'clear' : 'solid';
     }
 

@@ -2,21 +2,25 @@ import { defineCustomElement } from "@ionic/core/components/ion-app.js";
 import type { VNode } from "vue";
 import { h, defineComponent, shallowRef } from "vue";
 
-const userComponents = shallowRef([]);
-export const IonApp = /*@__PURE__*/ defineComponent((_, { attrs, slots }) => {
-  defineCustomElement();
-  return () => {
-    return h(
-      "ion-app",
-      {
-        ...attrs,
-      },
-      [slots.default && slots.default(), ...userComponents.value]
-    );
-  };
-});
-
-IonApp.name = "IonApp";
+const userComponents = shallowRef<VNode[]>([]);
+export const IonApp = /*@__PURE__*/ defineComponent(
+  (_, { attrs, slots }) => {
+    defineCustomElement();
+    return () => {
+      return h(
+        "ion-app",
+        {
+          name: "IonApp",
+          ...attrs,
+        },
+        [slots.default && slots.default(), ...userComponents.value]
+      );
+    };
+  },
+  {
+    name: "IonApp",
+  }
+);
 
 /**
  * When rendering user components inside of

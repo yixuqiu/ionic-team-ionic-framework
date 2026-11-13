@@ -30,6 +30,9 @@ export class Searchbar implements ComponentInterface {
   private originalIonInput?: EventEmitter<SearchbarInputEventDetail>;
   private inputId = `ion-searchbar-${searchbarIds++}`;
   private inheritedAttributes: Attributes = {};
+  private loadTimeout: ReturnType<typeof setTimeout> | undefined;
+  private clearTimeout: ReturnType<typeof setTimeout> | undefined;
+  private searchIconResizeObserver?: ResizeObserver;
 
   /**
    * The value of the input when the textarea is focused.
@@ -92,7 +95,7 @@ export class Searchbar implements ComponentInterface {
   /**
    * Set the input's autocorrect property.
    */
-  @Prop() autocorrect: 'on' | 'off' = 'off';
+  @Prop() autocorrect: boolean = false;
 
   /**
    * Set the cancel button icon. Only applies to `md` mode.
@@ -101,7 +104,7 @@ export class Searchbar implements ComponentInterface {
   @Prop() cancelButtonIcon = config.get('backButtonIcon', arrowBackSharp) as string;
 
   /**
-   * Set the the cancel button text. Only applies to `ios` mode.
+   * Set the cancel button text. Only applies to `ios` mode.
    */
   @Prop() cancelButtonText = 'Cancel';
 
@@ -288,9 +291,19 @@ export class Searchbar implements ComponentInterface {
     this.positionElements();
     this.debounceChanged();
 
-    setTimeout(() => {
+    this.loadTimeout = setTimeout(() => {
       this.noAnimate = false;
     }, 300);
+  }
+
+  disconnectedCallback() {
+    if (this.loadTimeout) {
+      clearTimeout(this.loadTimeout);
+    }
+    if (this.clearTimeout) {
+      clearTimeout(this.clearTimeout);
+    }
+    this.searchIconResizeObserver?.disconnect();
   }
 
   private emitStyle() {
@@ -302,10 +315,8 @@ export class Searchbar implements ComponentInterface {
   /**
    * Sets focus on the native `input` in `ion-searchbar`. Use this method instead of the global
    * `input.focus()`.
-   *
    * Developers who wish to focus an input when a page enters
    * should call `setFocus()` in the `ionViewDidEnter()` lifecycle method.
-   *
    * Developers who wish to focus an input when an overlay is presented
    * should call `setFocus` after `didPresent` has resolved.
    *
@@ -360,12 +371,15 @@ export class Searchbar implements ComponentInterface {
    * Clears the input field and triggers the control change.
    */
   private onClearInput = async (shouldFocus?: boolean) => {
+    if (this.clearTimeout) {
+      clearTimeout(this.clearTimeout);
+    }
     this.ionClear.emit();
 
     return new Promise<void>((resolve) => {
-      // setTimeout() fixes https://github.com/ionic-team/ionic/issues/7527
+      // setTimeout() fixes https://github.com/ionic-team/ionic-framework/issues/7527
       // wait for 4 frames
-      setTimeout(() => {
+      this.clearTimeout = setTimeout(() => {
         const value = this.getValue();
         if (value !== '') {
           this.value = '';
@@ -527,7 +541,26 @@ export class Searchbar implements ComponentInterface {
          * such as Dynamic Type on iOS as well as 8px
          * of padding.
          */
-        const iconLeft = 'calc(50% - ' + (textWidth / 2 + iconEl.clientWidth + 8) + 'px)';
+        const iconWidth = iconEl.clientWidth;
+
+        /**
+         * Fix for https://github.com/ionic-team/ionic-framework/issues/30434:
+         * iconEl.clientWidth can very briefly be 0 when this is called from componentDidLoad.
+         * If it is zero, set up a ResizeObserver and call this function when it observes a width greater than 0.
+         */
+        if (iconWidth === 0) {
+          this.searchIconResizeObserver?.disconnect();
+          this.searchIconResizeObserver = new ResizeObserver((entries) => {
+            if (entries[0].contentRect.width > 0) {
+              this.searchIconResizeObserver?.disconnect();
+              this.positionPlaceholder();
+            }
+          });
+          this.searchIconResizeObserver?.observe(iconEl);
+          return;
+        }
+
+        const iconLeft = 'calc(50% - ' + (textWidth / 2 + iconWidth + 8) + 'px)';
 
         // Set the input padding start and icon margin start
         if (rtl) {
@@ -672,7 +705,7 @@ export class Searchbar implements ComponentInterface {
             value={this.getValue()}
             autoCapitalize={autocapitalize === 'default' ? undefined : autocapitalize}
             autoComplete={this.autocomplete}
-            autoCorrect={this.autocorrect}
+            autoCorrect={this.autocorrect ? 'on' : 'off'}
             spellcheck={this.spellcheck}
             {...this.inheritedAttributes}
           />

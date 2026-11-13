@@ -1,8 +1,11 @@
 import type { ComponentInterface } from '@stencil/core';
 import { Component, Element, Host, Prop, Method, State, Watch, forceUpdate, h } from '@stencil/core';
+import type { AttributeController } from '@utils/attribute-controller';
+import { createTabindexController } from '@utils/attribute-controller';
 import type { ButtonInterface } from '@utils/element-interface';
 import type { Attributes } from '@utils/helpers';
 import { addEventListener, removeEventListener, inheritAttributes } from '@utils/helpers';
+import { printIonError, printIonWarning } from '@utils/logging';
 import { hostContext } from '@utils/theme';
 
 import { getIonMode } from '../../global/ionic-global';
@@ -31,10 +34,16 @@ export class SegmentButton implements ComponentInterface, ButtonInterface {
   private segmentEl: HTMLIonSegmentElement | null = null;
   private nativeEl: HTMLButtonElement | undefined;
   private inheritedAttributes: Attributes = {};
+  private tabindexController?: AttributeController;
 
   @Element() el!: HTMLElement;
 
   @State() checked = false;
+
+  /**
+   * The `id` of the segment content.
+   */
+  @Prop({ reflect: true }) contentId?: string;
 
   /**
    * If `true`, the user cannot interact with the segment button.
@@ -61,6 +70,8 @@ export class SegmentButton implements ComponentInterface, ButtonInterface {
   }
 
   connectedCallback() {
+    this.tabindexController?.init();
+
     const segmentEl = (this.segmentEl = this.el.closest('ion-segment'));
     if (segmentEl) {
       this.updateState();
@@ -70,6 +81,8 @@ export class SegmentButton implements ComponentInterface, ButtonInterface {
   }
 
   disconnectedCallback() {
+    this.tabindexController?.destroy();
+
     const segmentEl = this.segmentEl;
     if (segmentEl) {
       removeEventListener(segmentEl, 'ionSelect', this.updateState);
@@ -82,6 +95,39 @@ export class SegmentButton implements ComponentInterface, ButtonInterface {
     this.inheritedAttributes = {
       ...inheritAttributes(this.el, ['aria-label']),
     };
+    this.tabindexController = createTabindexController(this.el, () => forceUpdate(this));
+
+    // Return if there is no contentId defined
+    if (!this.contentId) return;
+
+    /**
+     * Checked here rather than in `connectedCallback` so frameworks that assign element
+     * props after inserting the element have set `disabled` by now. A disabled ion-segment
+     * pushes that onto its buttons too, which this guard should not undo.
+     */
+    if (this.disabled && this.segmentEl?.disabled !== true) {
+      printIonWarning(
+        `[ion-segment-button] - Segment buttons cannot be disabled when associated with an <ion-segment-content>.`
+      );
+      this.disabled = false;
+    }
+
+    // Attempt to find the Segment Content by its contentId
+    const segmentContent = document.getElementById(this.contentId) as HTMLIonSegmentContentElement | null;
+
+    // If no associated Segment Content exists, log an error and return
+    if (!segmentContent) {
+      printIonError(`[ion-segment-button] - Unable to find Segment Content with id="${this.contentId}".`);
+      return;
+    }
+
+    // Ensure the found element is a valid ION-SEGMENT-CONTENT
+    if (segmentContent.tagName !== 'ION-SEGMENT-CONTENT') {
+      printIonError(
+        `[ion-segment-button] - Element with id="${this.contentId}" is not an <ion-segment-content> element.`
+      );
+      return;
+    }
   }
 
   private get hasLabel() {
@@ -125,6 +171,7 @@ export class SegmentButton implements ComponentInterface, ButtonInterface {
   render() {
     const { checked, type, disabled, hasIcon, hasLabel, layout, segmentEl } = this;
     const mode = getIonMode(this);
+    const tabindexAttributes = this.tabindexController?.attributes ?? {};
     const hasSegmentColor = () => segmentEl?.color !== undefined;
     return (
       <Host
@@ -155,19 +202,14 @@ export class SegmentButton implements ComponentInterface, ButtonInterface {
           part="native"
           disabled={disabled}
           {...this.inheritedAttributes}
+          {...tabindexAttributes}
         >
           <span class="button-inner">
             <slot></slot>
           </span>
           {mode === 'md' && <ion-ripple-effect></ion-ripple-effect>}
         </button>
-        <div
-          part="indicator"
-          class={{
-            'segment-button-indicator': true,
-            'segment-button-indicator-animated': true,
-          }}
-        >
+        <div part="indicator" class="segment-button-indicator segment-button-indicator-animated">
           <div part="indicator-background" class="segment-button-indicator-background"></div>
         </div>
       </Host>

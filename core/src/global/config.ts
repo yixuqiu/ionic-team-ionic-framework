@@ -41,7 +41,7 @@ export const configFromSession = (win: Window): any => {
   try {
     const configStr = win.sessionStorage.getItem(IONIC_SESSION_KEY);
     return configStr !== null ? JSON.parse(configStr) : {};
-  } catch (e) {
+  } catch {
     return {};
   }
 };
@@ -49,7 +49,7 @@ export const configFromSession = (win: Window): any => {
 export const saveConfig = (win: Window, c: any) => {
   try {
     win.sessionStorage.setItem(IONIC_SESSION_KEY, JSON.stringify(c));
-  } catch (e) {
+  } catch {
     return;
   }
 };
@@ -60,7 +60,13 @@ export const configFromURL = (win: Window) => {
     .slice(1)
     .split('&')
     .map((entry) => entry.split('='))
-    .map(([key, value]) => [decodeURIComponent(key), decodeURIComponent(value)])
+    .map(([key, value]) => {
+      try {
+        return [decodeURIComponent(key), decodeURIComponent(value)];
+      } catch {
+        return ['', ''];
+      }
+    })
     .filter(([key]) => startsWith(key, IONIC_PREFIX))
     .map(([key, value]) => [key.slice(IONIC_PREFIX.length), value])
     .forEach(([key, value]) => {

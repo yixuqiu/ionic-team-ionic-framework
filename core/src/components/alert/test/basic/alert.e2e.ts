@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test';
 import type { Locator } from '@playwright/test';
 import type { E2EPage } from '@utils/test/playwright';
-import { configs, test } from '@utils/test/playwright';
+import { configs, detachAndReattach, test } from '@utils/test/playwright';
 
 configs({ directions: ['ltr'] }).forEach(({ config, screenshot, title }) => {
   test.describe(title('alert: basic'), () => {
@@ -19,6 +19,7 @@ configs({ directions: ['ltr'] }).forEach(({ config, screenshot, title }) => {
       await page.keyboard.press(tabKey);
       await expect(alertBtns.nth(0)).toBeFocused();
 
+      await page.keyboard.press(`Shift+${tabKey}`); // this will focus the alert-wrapper
       await page.keyboard.press(`Shift+${tabKey}`);
       await expect(alertBtns.nth(2)).toBeFocused();
 
@@ -30,7 +31,7 @@ configs({ directions: ['ltr'] }).forEach(({ config, screenshot, title }) => {
       const alertFixture = new AlertFixture(page, screenshot);
 
       const alert = await alertFixture.open('#basic');
-      await expect(alert).toHaveAttribute('data-testid', 'basic-alert');
+      await expect(alert.locator('.alert-wrapper')).toHaveAttribute('data-testid', 'basic-alert');
     });
 
     test('should dismiss when async handler resolves', async ({ page }) => {
@@ -100,6 +101,29 @@ configs().forEach(({ config, screenshot, title }) => {
   });
 });
 
+/**
+ * The right-border-between-buttons styling only exists in iOS mode (see
+ * alert.ios.scss). MD mode has no border to clear, so this is iOS only.
+ * This behavior does not vary across directions.
+ */
+configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ config, title }) => {
+  test.describe(title('alert: button group wrap'), () => {
+    test('two buttons that wrap should switch to vertical layout', async ({ page }, testInfo) => {
+      testInfo.annotations.push({
+        type: 'issue',
+        description: 'FW-7244',
+      });
+
+      await page.goto('/src/components/alert/test/basic', config);
+      const alertFixture = new AlertFixture(page);
+      await alertFixture.open('#confirmLongText');
+
+      const buttonGroup = page.locator('ion-alert .alert-button-group');
+      await expect(buttonGroup).toHaveClass(/alert-button-group-vertical/);
+    });
+  });
+});
+
 configs({ palettes: ['light', 'dark'] }).forEach(({ config, screenshot, title }) => {
   test.describe(title('should not have visual regressions'), () => {
     test('more than two buttons', async ({ page }) => {
@@ -153,6 +177,10 @@ class AlertFixture {
     this.alert = this.page.locator('ion-alert');
     await expect(this.alert).toBeVisible();
 
+    // Move mouse to the top-left corner of the page to avoid hover
+    // styles on buttons when taking screenshots
+    await this.page.mouse.move(0, 0);
+
     return this.alert;
   }
 
@@ -175,3 +203,56 @@ class AlertFixture {
     await expect(this.alert).toHaveScreenshot(screenshotFn(`alert-${modifier}`));
   }
 }
+
+/**
+ * The button gesture only exists in iOS mode, so these run there.
+ */
+configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ config, title }) => {
+  test.describe(title('alert: moved while presented'), () => {
+    test.beforeEach(async ({ page }) => {
+      await page.goto('/src/components/alert/test/basic', config);
+    });
+
+    test('should keep the app root locked', async ({ page }, testInfo) => {
+      testInfo.annotations.push({
+        type: 'issue',
+        description: 'https://github.com/ionic-team/ionic-framework/issues/31389',
+      });
+
+      const ionAlertDidPresent = await page.spyOnEvent('ionAlertDidPresent');
+
+      await page.click('#basic');
+      await ionAlertDidPresent.next();
+
+      await expect(page.locator('body')).toHaveClass(/backdrop-no-scroll/);
+
+      await detachAndReattach(page.locator('ion-alert'));
+
+      await expect(page.locator('body')).toHaveClass(/backdrop-no-scroll/);
+    });
+
+    test('should keep activating buttons on press', async ({ page }, testInfo) => {
+      testInfo.annotations.push({
+        type: 'issue',
+        description: 'https://github.com/ionic-team/ionic-framework/issues/31389',
+      });
+
+      const ionAlertDidPresent = await page.spyOnEvent('ionAlertDidPresent');
+
+      await page.click('#multipleButtons');
+      await ionAlertDidPresent.next();
+
+      await detachAndReattach(page.locator('ion-alert'));
+
+      const button = page.locator('ion-alert .alert-button').first();
+      const box = (await button.boundingBox())!;
+
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+
+      await expect(button).toHaveClass(/ion-activated/);
+
+      await page.mouse.up();
+    });
+  });
+});

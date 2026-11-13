@@ -49,6 +49,56 @@ configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => 
 
         await ionModalDidDismiss.next();
       });
+      test('should report isDismissing as true when canDismiss is Promise<true>', async ({ page }) => {
+        const ionModalDidPresent = await page.spyOnEvent('ionModalDidPresent');
+        const ionModalDidDismiss = await page.spyOnEvent('ionModalDidDismiss');
+
+        await page.click('#sheet-can-dismiss-promise-true');
+
+        await ionModalDidPresent.next();
+
+        const ionDragEnd = await page.spyOnEvent('ionDragEnd');
+
+        const modalHeader = page.locator('#modal-header');
+        await dragElementBy(modalHeader, page, 0, 500);
+
+        const dragEndEvent = await ionDragEnd.next();
+
+        /**
+         * canDismiss keeps the sheet from snapping to breakpoint 0, so the
+         * event has to report the dismiss that canDismiss goes on to perform.
+         */
+        expect(dragEndEvent.detail.isDismissing).toBe(true);
+
+        await ionModalDidDismiss.next();
+      });
+      test('should report isDismissing as true when canDismiss cancels the dismiss', async ({ page }) => {
+        const ionModalDidPresent = await page.spyOnEvent('ionModalDidPresent');
+        const ionHandlerDone = await page.spyOnEvent('ionHandlerDone');
+
+        await page.click('#sheet-can-dismiss-promise-false');
+
+        await ionModalDidPresent.next();
+
+        const ionDragEnd = await page.spyOnEvent('ionDragEnd');
+
+        const modalHeader = page.locator('#modal-header');
+        await dragElementBy(modalHeader, page, 0, 500);
+
+        const dragEndEvent = await ionDragEnd.next();
+
+        /**
+         * `ionDragEnd` fires before canDismiss resolves, so it reports the
+         * dismiss the gesture is attempting rather than the outcome. This is
+         * the one case where the two differ: canDismiss goes on to cancel the
+         * dismiss and the sheet stays open.
+         */
+        expect(dragEndEvent.detail.isDismissing).toBe(true);
+
+        await ionHandlerDone.next();
+
+        await expect(page.locator('ion-modal')).toBeVisible();
+      });
       test('should not dismiss on swipe when canDismiss is Promise<false>', async ({ page }) => {
         const ionModalDidPresent = await page.spyOnEvent('ionModalDidPresent');
         const ionHandlerDone = await page.spyOnEvent('ionHandlerDone');
@@ -62,11 +112,11 @@ configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => 
 
         await ionHandlerDone.next();
 
-        const modal = page.locator('ion-modal');
-        expect(modal).not.toBe(null);
+        await expect(page.locator('ion-modal')).toBeVisible();
       });
       test('should not dismiss on swipe when not attempting to close', async ({ page }) => {
         const ionModalDidPresent = await page.spyOnEvent('ionModalDidPresent');
+        const ionDragEnd = await page.spyOnEvent('ionDragEnd');
 
         await page.click('#sheet-can-dismiss-promise-true');
 
@@ -75,8 +125,14 @@ configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => 
         const modalHeader = page.locator('#modal-header');
         await dragElementBy(modalHeader, page, 0, 30);
 
-        const modal = page.locator('ion-modal');
-        expect(modal).not.toBe(null);
+        /**
+         * A drag this small snaps the sheet back open, so canDismiss is never
+         * consulted and the sheet stays where it was.
+         */
+        const dragEndEvent = await ionDragEnd.next();
+
+        expect(dragEndEvent.detail.isDismissing).toBe(false);
+        await expect(page.locator('ion-modal')).toBeVisible();
       });
       test('should hit the dismiss threshold when swiping', async ({ page }) => {
         const ionModalDidPresent = await page.spyOnEvent('ionModalDidPresent');

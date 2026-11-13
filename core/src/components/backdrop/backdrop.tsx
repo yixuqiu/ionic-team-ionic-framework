@@ -14,6 +14,10 @@ import { getIonMode } from '../../global/ionic-global';
 export class Backdrop implements ComponentInterface {
   /**
    * If `true`, the backdrop will be visible.
+   * This property controls whether or not the backdrop's
+   * default background is shown. It does not control whether
+   * or not the backdrop blocks interaction, and it does not
+   * override a custom background set on `ion-backdrop`.
    */
   @Prop() visible = true;
 
@@ -51,7 +55,6 @@ export class Backdrop implements ComponentInterface {
     const mode = getIonMode(this);
     return (
       <Host
-        tabindex="-1"
         aria-hidden="true"
         class={{
           [mode]: true,

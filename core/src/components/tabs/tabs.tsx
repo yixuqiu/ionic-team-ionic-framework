@@ -1,5 +1,6 @@
 import type { EventEmitter } from '@stencil/core';
 import { Component, Element, Event, Host, Method, Prop, State, h } from '@stencil/core';
+import { printIonError } from '@utils/logging';
 
 import type { NavOutlet, RouteID, RouteWrite } from '../router/utils/interface';
 import type { TabButtonClickEventDetail } from '../tab-bar/tab-bar-interface';
@@ -43,7 +44,17 @@ export class Tabs implements NavOutlet {
 
   async componentWillLoad() {
     if (!this.useRouter) {
-      this.useRouter = !!document.querySelector('ion-router') && !this.el.closest('[no-router]');
+      /**
+       * JavaScript and StencilJS use `ion-router`, while
+       * the other frameworks use `ion-router-outlet`.
+       *
+       * If either component is present then tabs will not use
+       * a basic tab-based navigation. It will use the history
+       * stack or URL updates associated with the router.
+       */
+      this.useRouter =
+        (!!this.el.querySelector('ion-router-outlet') || !!document.querySelector('ion-router')) &&
+        !this.el.closest('[no-router]');
     }
     if (!this.useRouter) {
       const tabs = this.tabs;
@@ -54,12 +65,33 @@ export class Tabs implements NavOutlet {
     this.ionNavWillLoad.emit();
   }
 
-  componentWillRender() {
+  componentDidLoad() {
+    this.updateTabBar();
+  }
+
+  componentDidUpdate() {
+    this.updateTabBar();
+  }
+
+  private updateTabBar() {
     const tabBar = this.el.querySelector('ion-tab-bar');
-    if (tabBar) {
-      const tab = this.selectedTab ? this.selectedTab.tab : undefined;
-      tabBar.selectedTab = tab;
+    if (!tabBar) {
+      return;
     }
+
+    const tab = this.selectedTab ? this.selectedTab.tab : undefined;
+
+    // If tabs has no selected tab but tab-bar already has a selected-tab set,
+    // don't overwrite it. This handles cases where tab-bar is used without ion-tab elements.
+    if (tab === undefined) {
+      return;
+    }
+
+    if (tabBar.selectedTab === tab) {
+      return;
+    }
+
+    tabBar.selectedTab = tab;
   }
 
   /**
@@ -131,6 +163,7 @@ export class Tabs implements NavOutlet {
     this.selectedTab = selectedTab;
     this.ionTabsWillChange.emit({ tab: selectedTab.tab });
     selectedTab.active = true;
+    this.updateTabBar();
     return Promise.resolve();
   }
 
@@ -200,7 +233,7 @@ const getTab = (tabs: HTMLIonTabElement[], tab: string | HTMLIonTabElement): HTM
   const tabEl = typeof tab === 'string' ? tabs.find((t) => t.tab === tab) : tab;
 
   if (!tabEl) {
-    console.error(`tab with id: "${tabEl}" does not exist`);
+    printIonError(`[ion-tabs] - Tab with id: "${tabEl}" does not exist`);
   }
   return tabEl;
 };

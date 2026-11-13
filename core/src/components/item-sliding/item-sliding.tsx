@@ -1,7 +1,9 @@
 import type { ComponentInterface, EventEmitter } from '@stencil/core';
 import { Component, Element, Event, Host, Method, Prop, State, Watch, h } from '@stencil/core';
 import { findClosestIonContent, disableContentScrollY, resetContentScrollY } from '@utils/content';
-import { isEndSide } from '@utils/helpers';
+import { componentOnReady, isEndSide } from '@utils/helpers';
+import { printIonWarning } from '@utils/logging';
+import { isRTL } from '@utils/rtl';
 import { watchForOptions } from '@utils/watch-options';
 
 import { getIonMode } from '../../global/ionic-global';
@@ -175,7 +177,7 @@ export class ItemSliding implements ComponentInterface {
     }
 
     // In RTL we want to switch the sides
-    side = isEndSide(side) ? 'end' : 'start';
+    side = isEndSide(side, this.el) ? 'end' : 'start';
 
     const isStartOpen = this.openAmount < 0;
     const isEndOpen = this.openAmount > 0;
@@ -244,25 +246,22 @@ export class ItemSliding implements ComponentInterface {
   }
 
   private async updateOptions() {
-    const options = this.el.querySelectorAll('ion-item-options');
+    const options = Array.from(this.el.querySelectorAll('ion-item-options'));
+
+    /**
+     * Frameworks that assign element props after inserting the element haven't set
+     * `side` while `connectedCallback` runs, so reading it any earlier reports every
+     * option as `end`.
+     */
+    await Promise.all(options.map((option) => new Promise((resolve) => componentOnReady(option, resolve))));
 
     let sides = 0;
 
     // Reset left and right options in case they were removed
     this.leftOptions = this.rightOptions = undefined;
 
-    for (let i = 0; i < options.length; i++) {
-      const item = options.item(i);
-
-      /**
-       * We cannot use the componentOnReady helper
-       * util here since we need to wait for all of these items
-       * to be ready before we set `this.sides` and `this.optsDirty`.
-       */
-      // eslint-disable-next-line custom-rules/no-component-on-ready-method
-      const option = (item as any).componentOnReady !== undefined ? await item.componentOnReady() : item;
-
-      const side = isEndSide(option.side) ? 'end' : 'start';
+    for (const option of options) {
+      const side = isEndSide(option.side ?? option.getAttribute('side'), option) ? 'end' : 'start';
 
       if (side === 'start') {
         this.leftOptions = option;
@@ -282,7 +281,7 @@ export class ItemSliding implements ComponentInterface {
      * do not open left side so swipe to go
      * back will still work.
      */
-    const rtl = document.dir === 'rtl';
+    const rtl = isRTL(this.el);
     const atEdge = rtl ? window.innerWidth - gesture.startX < 15 : gesture.startX < 15;
     if (atEdge) {
       return false;
@@ -343,7 +342,7 @@ export class ItemSliding implements ComponentInterface {
       case ItemSide.None:
         return;
       default:
-        console.warn('invalid ItemSideFlags value', this.sides);
+        printIonWarning('[ion-item-sliding] - invalid ItemSideFlags value', this.sides);
         break;
     }
 

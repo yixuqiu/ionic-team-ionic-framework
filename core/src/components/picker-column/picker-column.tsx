@@ -1,7 +1,7 @@
 import type { ComponentInterface, EventEmitter } from '@stencil/core';
 import { Component, Element, Event, Host, Method, Prop, State, Watch, h } from '@stencil/core';
 import { doc } from '@utils/browser';
-import { getElementRoot, raf } from '@utils/helpers';
+import { raf } from '@utils/helpers';
 import { hapticSelectionChanged, hapticSelectionEnd, hapticSelectionStart } from '@utils/native/haptic';
 import { isPlatform } from '@utils/platform';
 import { createColorClasses } from '@utils/theme';
@@ -33,6 +33,19 @@ export class PickerColumn implements ComponentInterface {
   private canExitInputMode = true;
   private assistiveFocusable?: HTMLElement;
   private updateValueTextOnScroll = false;
+  private scrollEndTimeout?: ReturnType<typeof setTimeout>;
+  private centeredOption?: HTMLIonPickerColumnOptionElement;
+  private isUserScroll = false;
+  /**
+   * Where the column halted itself, so the halt's own scroll events are not
+   * read as movement.
+   */
+  private haltedAtScrollTop?: number;
+  /**
+   * The haptics for the wheel picker are an iOS-only feature. As a result,
+   * they should be disabled on Android.
+   */
+  private enableHaptics = false;
 
   @State() ariaLabel: string | null = null;
 
@@ -60,7 +73,7 @@ export class PickerColumn implements ComponentInterface {
    * Default options are: `"primary"`, `"secondary"`, `"tertiary"`, `"success"`, `"warning"`, `"danger"`, `"light"`, `"medium"`, and `"dark"`.
    * For more information on colors, see [theming](/docs/theming/basics).
    */
-  @Prop({ reflect: true }) color?: Color = 'primary';
+  @Prop({ reflect: true }) color?: Color;
 
   /**
    * If `true`, tapping the picker will
@@ -122,9 +135,7 @@ export class PickerColumn implements ComponentInterface {
          * Because this initial call to scrollActiveItemIntoView has to fire before
          * the scroll listener is set up, we need to manage the active class manually.
          */
-        const oldActive = getElementRoot(el).querySelector<HTMLIonPickerColumnOptionElement>(
-          `.${PICKER_ITEM_ACTIVE_CLASS}`
-        );
+        const oldActive = el.querySelector<HTMLIonPickerColumnOptionElement>(`.${PICKER_ITEM_ACTIVE_CLASS}`);
         if (oldActive) {
           this.setPickerItemActiveState(oldActive, false);
         }
@@ -136,6 +147,15 @@ export class PickerColumn implements ComponentInterface {
         this.initializeScrollListener();
       } else {
         this.isColumnVisible = false;
+
+        /**
+         * The pending timer still runs so it resets the scroll state, but the
+         * option it would have committed is dropped. A column the user cannot
+         * see should not change its value.
+         */
+        this.stopWatchingForOutsidePress();
+        this.centeredOption = undefined;
+        this.haltedAtScrollTop = undefined;
 
         if (this.destroyScrollListener) {
           this.destroyScrollListener();
@@ -212,13 +232,21 @@ export class PickerColumn implements ComponentInterface {
    */
   @Method()
   async setFocus() {
-    if (this.scrollEl) {
-      this.scrollEl.focus();
+    if (this.assistiveFocusable) {
+      this.assistiveFocusable.focus();
     }
   }
 
   connectedCallback() {
     this.ariaLabel = this.el.getAttribute('aria-label') ?? 'Select a value';
+  }
+
+  disconnectedCallback() {
+    /**
+     * A pending settle would otherwise commit a value on a column that is no
+     * longer in the DOM.
+     */
+    this.discardScroll();
   }
 
   private centerPickerItemInView = (target: HTMLElement, smooth = true, canExitInputMode = true) => {
@@ -238,6 +266,14 @@ export class PickerColumn implements ComponentInterface {
          */
         this.canExitInputMode = canExitInputMode;
         this.updateValueTextOnScroll = false;
+
+        /**
+         * This scroll takes over from whatever the user was doing, so an outside
+         * press must not commit an option the column is only passing through.
+         */
+        this.isUserScroll = false;
+        this.stopWatchingForOutsidePress();
+
         scrollEl.scroll({
           top,
           left: 0,
@@ -300,6 +336,136 @@ export class PickerColumn implements ComponentInterface {
     this.isActive = state;
   };
 
+  private clearScrollEndTimeout = () => {
+    if (this.scrollEndTimeout) {
+      clearTimeout(this.scrollEndTimeout);
+      this.scrollEndTimeout = undefined;
+    }
+  };
+
+  /**
+   * Resets the idle timer that commits the centered option.
+   */
+  private resetScrollEndTimeout = () => {
+    this.clearScrollEndTimeout();
+    this.scrollEndTimeout = setTimeout(this.settle, SCROLL_END_DELAY);
+  };
+
+  /**
+   * Capture so the column still commits if an application's own pointerdown
+   * handler stops the event before it reaches the document.
+   */
+  private watchForOutsidePress = () => {
+    doc?.addEventListener('pointerdown', this.onPointerDownOutside, { capture: true });
+  };
+
+  private stopWatchingForOutsidePress = () => {
+    doc?.removeEventListener('pointerdown', this.onPointerDownOutside, { capture: true });
+  };
+
+  /**
+   * Resets everything the current scroll interaction is holding, so nothing
+   * pending on it can commit later.
+   */
+  private discardScroll = () => {
+    this.stopWatchingForOutsidePress();
+    this.clearScrollEndTimeout();
+    this.scrollEndCallback = undefined;
+    this.centeredOption = undefined;
+    this.haltedAtScrollTop = undefined;
+    this.isScrolling = false;
+    this.isUserScroll = false;
+    this.canExitInputMode = true;
+  };
+
+  /**
+   * Commits the option that is currently centered under the highlight and ends
+   * the scroll interaction.
+   */
+  private settle = () => {
+    const { centeredOption } = this;
+
+    this.clearScrollEndTimeout();
+    this.stopWatchingForOutsidePress();
+
+    this.isUserScroll = false;
+    this.isScrolling = false;
+    this.updateValueTextOnScroll = true;
+
+    this.enableHaptics && hapticSelectionEnd();
+
+    /**
+     * Certain tasks (such as those that
+     * cause re-renders) should only be done
+     * once scrolling has finished, otherwise
+     * flickering may occur.
+     */
+    const { scrollEndCallback } = this;
+    if (scrollEndCallback) {
+      scrollEndCallback();
+      this.scrollEndCallback = undefined;
+    }
+
+    /**
+     * Reset this flag as the
+     * next scroll interaction could
+     * be a scroll from the user. In this
+     * case, we should exit input mode.
+     */
+    this.canExitInputMode = true;
+
+    if (centeredOption !== undefined) {
+      // Cleared here so a later scroll that centers nothing cannot fall back on it.
+      this.centeredOption = undefined;
+
+      if (centeredOption.isConnected) {
+        this.setValue(centeredOption.value);
+      }
+    }
+  };
+
+  /**
+   * Commits the option the user can see when they press anything outside of the
+   * column during a scroll they started. This runs on pointerdown rather than
+   * click so the value is up to date by the time an application's own click
+   * handler (a Save button, for example) reads it.
+   */
+  private onPointerDownOutside = (ev: Event) => {
+    const { centeredOption, parentEl, scrollEl } = this;
+
+    if (!this.isScrolling) {
+      return;
+    }
+
+    /**
+     * The column can live in another component's Shadow DOM, where a document
+     * listener sees the target retargeted to the outer host. The composed path
+     * is the only reliable way to tell a press on the column apart.
+     */
+    const path = ev.composedPath();
+
+    /**
+     * A press anywhere in the parent picker counts as inside, so reaching for a
+     * sibling wheel leaves this column coasting.
+     */
+    if (path.includes(this.el) || (parentEl != null && path.includes(parentEl))) {
+      return;
+    }
+
+    /**
+     * Landing on the centered option halts the in-flight momentum scroll, so the
+     * committed value and the option the user is left looking at agree. The
+     * option list can be replaced mid-scroll, and a detached option has no
+     * offset to center on.
+     */
+    if (centeredOption !== undefined && centeredOption.isConnected) {
+      this.centerPickerItemInView(centeredOption, false, false);
+      this.haltedAtScrollTop = scrollEl?.scrollTop;
+    }
+
+    this.settle();
+  };
+
   /**
    * When the column scrolls, the component
    * needs to determine which item is centered
@@ -307,29 +473,47 @@ export class PickerColumn implements ComponentInterface {
    * the item object.
    */
   private initializeScrollListener = () => {
-    /**
-     * The haptics for the wheel picker are
-     * an iOS-only feature. As a result, they should
-     * be disabled on Android.
-     */
-    const enableHaptics = isPlatform('ios');
+    this.enableHaptics = isPlatform('ios');
     const { el, scrollEl } = this;
 
-    let timeout: ReturnType<typeof setTimeout> | undefined;
     let activeEl: HTMLIonPickerColumnOptionElement | undefined = this.activeItem;
 
     const scrollCallback = () => {
       raf(() => {
-        if (!scrollEl) return;
+        /**
+         * This frame cannot be cancelled, and moving the column disconnects it
+         * without the observer reporting a change, so this checks live state.
+         */
+        if (!this.el.isConnected || !this.isColumnVisible || !scrollEl) return;
 
-        if (timeout) {
-          clearTimeout(timeout);
-          timeout = undefined;
+        const { haltedAtScrollTop } = this;
+
+        if (haltedAtScrollTop !== undefined) {
+          /**
+           * Still at the halted position, so this frame is the halt landing
+           * rather than the wheel moving, and re-arming would start a second
+           * commit cycle.
+           */
+          if (Math.abs(scrollEl.scrollTop - haltedAtScrollTop) <= HALT_TOLERANCE) return;
+
+          this.haltedAtScrollTop = undefined;
         }
 
+        // Armed before the early returns below, so a scroll never ends uncommitted.
+        this.resetScrollEndTimeout();
+
         if (!this.isScrolling) {
-          enableHaptics && hapticSelectionStart();
+          this.enableHaptics && hapticSelectionStart();
           this.isScrolling = true;
+        }
+
+        /**
+         * Only a user-driven scroll holds an uncommitted selection. Checked every
+         * frame because the user can take hold of the wheel mid-scroll, and
+         * re-adding the same listener is a no-op.
+         */
+        if (this.isUserScroll) {
+          this.watchForOutsidePress();
         }
 
         /**
@@ -376,14 +560,39 @@ export class PickerColumn implements ComponentInterface {
          * elementsFromPoint can returns multiple elements
          * so find the relevant picker column option if one exists.
          */
-        const newActiveElement = elementsAtPoint.find((el) => el.tagName === 'ION-PICKER-COLUMN-OPTION');
+        let newActiveElement = elementsAtPoint.find((el) => el.tagName === 'ION-PICKER-COLUMN-OPTION');
+
+        /**
+         * TODO(FW-6594): Remove this workaround when iOS 16 is no longer
+         * supported.
+         *
+         * If `elementsFromPoint` failed to find the active element (a known
+         * issue on iOS 16 when elements are in a Shadow DOM and the
+         * referenceNode is the document), a fallback to `elementFromPoint`
+         * is used. While `elementsFromPoint` returns all elements,
+         * `elementFromPoint` returns only the top-most, which is sufficient
+         * for this use case and appears to handle Shadow DOM retargeting
+         * more reliably in this specific iOS bug.
+         */
+        if (newActiveElement === undefined) {
+          const fallbackActiveElement = referenceNode.elementFromPoint(centerX, centerY);
+
+          if (fallbackActiveElement?.tagName === 'ION-PICKER-COLUMN-OPTION') {
+            newActiveElement = fallbackActiveElement as HTMLIonPickerColumnOptionElement;
+          }
+        }
+
+        /**
+         * A scroll can land with no selectable option centered, such as an
+         * overscroll bounce briefly centering the empty padding rows. Keep the
+         * current selection until an option is centered again.
+         */
+        if (newActiveElement === undefined || newActiveElement.disabled) {
+          return;
+        }
 
         if (activeEl !== undefined) {
           this.setPickerItemActiveState(activeEl, false);
-        }
-
-        if (newActiveElement === undefined || newActiveElement.disabled) {
-          return;
         }
 
         /**
@@ -391,7 +600,7 @@ export class PickerColumn implements ComponentInterface {
          * we need to run haptics again.
          */
         if (newActiveElement !== activeEl) {
-          enableHaptics && hapticSelectionChanged();
+          this.enableHaptics && hapticSelectionChanged();
 
           if (this.canExitInputMode) {
             /**
@@ -427,34 +636,15 @@ export class PickerColumn implements ComponentInterface {
           this.assistiveFocusable?.setAttribute('aria-valuetext', this.getOptionValueText(newActiveElement));
         }
 
-        timeout = setTimeout(() => {
-          this.isScrolling = false;
-          this.updateValueTextOnScroll = true;
-          enableHaptics && hapticSelectionEnd();
-
-          /**
-           * Certain tasks (such as those that
-           * cause re-renders) should only be done
-           * once scrolling has finished, otherwise
-           * flickering may occur.
-           */
-          const { scrollEndCallback } = this;
-          if (scrollEndCallback) {
-            scrollEndCallback();
-            this.scrollEndCallback = undefined;
-          }
-
-          /**
-           * Reset this flag as the
-           * next scroll interaction could
-           * be a scroll from the user. In this
-           * case, we should exit input mode.
-           */
-          this.canExitInputMode = true;
-
-          this.setValue(newActiveElement.value);
-        }, 250);
+        this.centeredOption = newActiveElement;
       });
+    };
+
+    const userScrollCallback = () => {
+      this.isUserScroll = true;
+
+      // Taking hold of the wheel ends the halt even if it has not moved yet.
+      this.haltedAtScrollTop = undefined;
     };
 
     /**
@@ -465,9 +655,20 @@ export class PickerColumn implements ComponentInterface {
       if (!scrollEl) return;
 
       scrollEl.addEventListener('scroll', scrollCallback);
+      scrollEl.addEventListener('pointerdown', userScrollCallback);
+      scrollEl.addEventListener('wheel', userScrollCallback, { passive: true });
+      /**
+       * A `pointerdown` fires once per touch, so a drag that pauses long enough
+       * to commit would look like a scroll the column started. A `touchmove`
+       * keeps arriving while the finger moves.
+       */
+      scrollEl.addEventListener('touchmove', userScrollCallback, { passive: true });
 
       this.destroyScrollListener = () => {
         scrollEl.removeEventListener('scroll', scrollCallback);
+        scrollEl.removeEventListener('pointerdown', userScrollCallback);
+        scrollEl.removeEventListener('wheel', userScrollCallback);
+        scrollEl.removeEventListener('touchmove', userScrollCallback);
       };
     });
   };
@@ -619,7 +820,7 @@ export class PickerColumn implements ComponentInterface {
     }
 
     if (newOption !== null) {
-      this.value = newOption.value;
+      this.setValue(newOption.value);
 
       // This stops any default browser behavior such as scrolling
       ev.preventDefault();
@@ -631,39 +832,6 @@ export class PickerColumn implements ComponentInterface {
    */
   private getOptionValueText = (el?: HTMLIonPickerColumnOptionElement) => {
     return el ? el.getAttribute('aria-label') ?? el.innerText : '';
-  };
-
-  /**
-   * Render an element that overlays the column. This element is for assistive
-   * tech to allow users to navigate the column up/down. This element should receive
-   * focus as it listens for synthesized keyboard events as required by the
-   * slider role: https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Roles/slider_role
-   */
-  private renderAssistiveFocusable = () => {
-    const { activeItem } = this;
-    const valueText = this.getOptionValueText(activeItem);
-
-    /**
-     * When using the picker, the valuetext provides important context that valuenow
-     * does not. Additionally, using non-zero valuemin/valuemax values can cause
-     * WebKit to incorrectly announce numeric valuetext values (such as a year
-     * like "2024") as percentages: https://bugs.webkit.org/show_bug.cgi?id=273126
-     */
-    return (
-      <div
-        ref={(el) => (this.assistiveFocusable = el)}
-        class="assistive-focusable"
-        role="slider"
-        tabindex={this.disabled ? undefined : 0}
-        aria-label={this.ariaLabel}
-        aria-valuemin={0}
-        aria-valuemax={0}
-        aria-valuenow={0}
-        aria-valuetext={valueText}
-        aria-orientation="vertical"
-        onKeyDown={(ev) => this.onKeyDown(ev)}
-      ></div>
-    );
   };
 
   render() {
@@ -679,14 +847,21 @@ export class PickerColumn implements ComponentInterface {
           ['picker-column-disabled']: disabled,
         })}
       >
-        {this.renderAssistiveFocusable()}
         <slot name="prefix"></slot>
         <div
-          aria-hidden="true"
           class="picker-opts"
           ref={(el) => {
             this.scrollEl = el;
           }}
+          role="slider"
+          tabindex={this.disabled ? undefined : 0}
+          aria-label={this.ariaLabel}
+          aria-valuemin={0}
+          aria-valuemax={0}
+          aria-valuenow={0}
+          aria-valuetext={this.getOptionValueText(this.activeItem)}
+          aria-orientation="vertical"
+          onKeyDown={(ev) => this.onKeyDown(ev)}
         >
           <div class="picker-item-empty" aria-hidden="true">
             &nbsp;
@@ -715,3 +890,18 @@ export class PickerColumn implements ComponentInterface {
 }
 
 const PICKER_ITEM_ACTIVE_CLASS = 'option-active';
+
+/**
+ * How long the column must be idle before the centered option is treated as
+ * the user's selection. Replaceable by the `scrollend` event once that is
+ * supported everywhere (https://caniuse.com/?search=scrollend).
+ */
+const SCROLL_END_DELAY = 250;
+
+/**
+ * How far, in pixels, the column may report from where it was halted and still
+ * count as having stayed there. Centering targets a position between two snap
+ * points, so mandatory snapping corrects it by half the column height less
+ * three option heights: 2px at the default sizes.
+ */
+const HALT_TOLERANCE = 2;

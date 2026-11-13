@@ -200,3 +200,98 @@ configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => 
     });
   });
 });
+
+/**
+ * This behavior does not vary across directions
+ */
+configs({ directions: ['ltr'] }).forEach(({ title, screenshot, config }) => {
+  test.describe(title('item: inputs'), () => {
+    test('should not shrink the width of a div next to a checkbox, radio, select or toggle', async ({
+      page,
+    }, testInfo) => {
+      testInfo.annotations.push({
+        type: 'issue',
+        description: 'https://github.com/ionic-team/ionic-framework/issues/29319',
+      });
+      await page.setContent(
+        `
+        <style>
+          .box {
+            background: lightgreen;
+
+            width: 60px;
+            height: 60px;
+          }
+        </style>
+
+        <ion-list lines="none">
+          <ion-item>
+            <div class="box"></div>
+            <ion-checkbox>Checkbox</ion-checkbox>
+          </ion-item>
+          <ion-item>
+            <div class="box"></div>
+            <ion-radio>Radio</ion-radio>
+          </ion-item>
+          <ion-item>
+            <div class="box"></div>
+            <ion-select label="Select">
+              <ion-select-option>Option</ion-select-option>
+            </ion-select>
+          </ion-item>
+          <ion-item>
+            <div class="box"></div>
+            <ion-toggle>Toggle</ion-toggle>
+          </ion-item>
+        </ion-list>
+      `,
+        config
+      );
+
+      const list = page.locator('ion-list');
+
+      await expect(list).toHaveScreenshot(screenshot(`item-inputs-div-with-inputs`));
+    });
+
+    test('should update interactivity state when elements are conditionally rendered', async ({ page }, testInfo) => {
+      testInfo.annotations.push({
+        type: 'issue',
+        description: 'https://github.com/ionic-team/ionic-framework/issues/29763',
+      });
+
+      await page.setContent(
+        `
+        <ion-list>
+          <ion-item>
+            <ion-label>Conditional Checkbox</ion-label>
+          </ion-item>
+        </ion-list>
+        `,
+        config
+      );
+
+      const item = page.locator('ion-item');
+
+      await page.evaluate(() => {
+        const item = document.querySelector('ion-item');
+        const checkbox = document.createElement('ion-checkbox');
+        item?.appendChild(checkbox);
+      });
+
+      await page.waitForChanges();
+
+      const checkbox = page.locator('ion-checkbox');
+      await expect(checkbox).not.toBeChecked();
+
+      // Test that clicking on the left edge of the item toggles the checkbox
+      await item.click({
+        position: {
+          x: 5,
+          y: 5,
+        },
+      });
+
+      await expect(checkbox).toBeChecked();
+    });
+  });
+});

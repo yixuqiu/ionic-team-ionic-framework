@@ -1,5 +1,6 @@
 import { win } from '@utils/browser';
 import type { CloseWatcher } from '@utils/browser';
+import { printIonError } from '@utils/logging';
 
 import { config } from '../global/config';
 
@@ -44,7 +45,27 @@ export const shouldUseCloseWatcher = () =>
  * will still happen.
  */
 export const blockHardwareBackButton = () => {
-  document.addEventListener('backbutton', () => {}); // eslint-disable-line
+  document.addEventListener('backbutton', () => {});
+};
+
+const closeWatcherConditions: (() => boolean)[] = [];
+let syncCloseWatcher: (() => void) | undefined;
+
+/**
+ * Registers a check for whether the back button
+ * has something to close. The CloseWatcher is only
+ * active while one of these checks passes.
+ */
+export const addCloseWatcherCondition = (condition: () => boolean) => {
+  closeWatcherConditions.push(condition);
+};
+
+/**
+ * Call this whenever something the back button
+ * can close opens or closes.
+ */
+export const updateCloseWatcher = () => {
+  syncCloseWatcher?.();
 };
 
 export const startHardwareBackButton = () => {
@@ -77,7 +98,7 @@ export const startHardwareBackButton = () => {
           }
         }
       } catch (e) {
-        console.error(e);
+        printIonError('[ion-app] - Exception in startHardwareBackButton:', e);
       }
     };
 
@@ -104,16 +125,32 @@ export const startHardwareBackButton = () => {
   };
 
   /**
-   * If the CloseWatcher is defined then
-   * we don't want to also listen for the native
-   * backbutton event otherwise we may get duplicate
-   * events firing.
+   * Android WebView never sends the hardware back
+   * button to a CloseWatcher, so hybrid apps still
+   * need this. Browsers never fire backbutton.
    */
+  doc.addEventListener('backbutton', backButtonCallback);
+
   if (shouldUseCloseWatcher()) {
     let watcher: CloseWatcher | undefined;
 
-    const configureWatcher = () => {
-      watcher?.destroy();
+    /**
+     * An active CloseWatcher stops the back button from
+     * navigating, so only keep one while there's something to close.
+     */
+    syncCloseWatcher = () => {
+      const canClose = closeWatcherConditions.some((condition) => condition());
+
+      if (!canClose) {
+        watcher?.destroy();
+        watcher = undefined;
+        return;
+      }
+
+      if (watcher !== undefined) {
+        return;
+      }
+
       watcher = new win!.CloseWatcher!();
 
       /**
@@ -121,17 +158,18 @@ export const startHardwareBackButton = () => {
        * the watcher gets destroyed.
        * As a result, we need to re-configure
        * the watcher so we can respond to other
-       * close requests.
+       * close requests, including after one that
+       * closed nothing, like a modal whose canDismiss
+       * returned false.
        */
       watcher!.onclose = () => {
+        watcher = undefined;
         backButtonCallback();
-        configureWatcher();
+        syncCloseWatcher?.();
       };
     };
 
-    configureWatcher();
-  } else {
-    doc.addEventListener('backbutton', backButtonCallback);
+    syncCloseWatcher();
   }
 };
 

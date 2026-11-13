@@ -2,7 +2,7 @@ describe('Routing', () => {
   it('should go to sibling page', () => {
     cy.visit('/');
     cy.ionPageVisible('home');
-    cy.get('ion-item#routing').click();
+    cy.get('ion-item#routing').click({ force: true });
 
     cy.ionPageVisible('routing');
     cy.ionPageHidden('home');
@@ -18,7 +18,7 @@ describe('Routing', () => {
   it('should go back home', () => {
     cy.visit('/');
     cy.ionPageVisible('home');
-    cy.get('ion-item#routing').click();
+    cy.get('ion-item#routing').click({ force: true });
 
     cy.ionBackClick('routing');
 
@@ -40,7 +40,7 @@ describe('Routing', () => {
     cy.visit('/');
     cy.ionPageVisible('home');
 
-    cy.get('#routing').click();
+    cy.get('#routing').click({ force: true });
     cy.get('#child').click();
 
     cy.ionBackClick('routingchild');
@@ -539,7 +539,7 @@ describe('Routing - Swipe to Go Back', () => {
     cy.viewport(320, 568);
     cy.visit('?ionic:mode=ios');
     cy.ionPageVisible('home');
-    cy.get('#routing').click();
+    cy.get('#routing').click({ force: true });
     cy.ionPageHidden('home');
     cy.ionPageVisible('routing')
   });
@@ -556,6 +556,20 @@ describe('Routing - Swipe to Go Back', () => {
 
     // TODO: Vue router does not go back in cypress with router.back()
     //cy.ionPageDoesNotExist('navigation');
+  });
+
+  it('should not swipe back when swipeGesture is false', () => {
+    cy.visit('/swipe-gesture-disabled?ionic:mode=ios');
+    cy.viewport(320, 568);
+    cy.ionPageVisible('swipe-gesture-disabled-main');
+
+    cy.get('#swipe-disabled-details').click({ force: true });
+    cy.ionPageVisible('swipe-gesture-disabled-details');
+    cy.ionPageHidden('swipe-gesture-disabled-main');
+
+    cy.ionSwipeToGoBack(true);
+    cy.ionPageVisible('swipe-gesture-disabled-details');
+    cy.ionPageHidden('swipe-gesture-disabled-main');
   });
 
   it.skip('swipe to go back should work when using router.go()', () => {
@@ -584,4 +598,10 @@ describe('Routing - Swipe to Go Back', () => {
     cy.ionPageDoesNotExist('routingparameter-abc');
     cy.ionPageVisible('routing');
   })
+
+  it('should be activatable when router-link is used on an item without the button property', () => {
+    cy.visit('/');
+
+    cy.get('ion-item[routerlink="/overlays"]').should('have.class', 'ion-activatable');
+  });
 })

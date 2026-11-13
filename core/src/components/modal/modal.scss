@@ -27,7 +27,12 @@
   --max-width: auto;
   --height: 100%;
   --min-height: auto;
-  --max-height: auto;
+  /**
+   * Clamps a content-sized `--height` (auto, fit-content, ...) to the
+   * overlay, giving the wrapper's flex children something to shrink
+   * toward so `ion-content` scrolls instead of overflowing.
+   */
+  --max-height: 100%;
   --overflow: hidden;
   --border-radius: 0;
   --border-width: 0;
@@ -84,6 +89,22 @@ ion-backdrop {
   z-index: 10;
 }
 
+/**
+ * The wrapper receives programmatic focus for screen readers but should not
+ * show a visible focus ring, which is meant only for keyboard navigation.
+ *
+ * A flex layout is required for the wrapper to size itself to its content
+ * when the modal is content-sized (`--height` is auto, fit-content, ...).
+ * This makes it so that the content can scroll when it overflows the wrapper.
+ */
+.modal-wrapper {
+  display: flex;
+
+  flex-direction: column;
+
+  outline: none;
+}
+
 .modal-shadow {
   position: absolute;
 
@@ -94,10 +115,6 @@ ion-backdrop {
   :host {
     --width: #{$modal-inset-width};
     --height: #{$modal-inset-height-small};
-    --ion-safe-area-top: 0px;
-    --ion-safe-area-bottom: 0px;
-    --ion-safe-area-right: 0px;
-    --ion-safe-area-left: 0px;
   }
 }
 
@@ -156,13 +173,28 @@ ion-backdrop {
 /**
  * Ensure that the sheet modal does not
  * completely cover the content.
+ *
+ * --ion-modal-offset-top is an internal property set by modal.tsx
+ * with the resolved root safe-area-top pixel value. This decouples
+ * the height calculation from --ion-safe-area-top (which is zeroed
+ * for sheet modals to prevent header double-padding).
  */
 :host(.modal-sheet) {
-  --height: calc(100% - (var(--ion-safe-area-top) + 10px));
+  --height: calc(100% - (var(--ion-modal-offset-top, 0px) + 10px));
 }
 
 :host(.modal-sheet) .modal-wrapper,
 :host(.modal-sheet) .modal-shadow {
   position: absolute;
   bottom: 0;
+}
+
+// Sheet Modal - Scroll at all breakpoints
+// --------------------------------------------------
+
+:host(.modal-sheet.modal-no-expand-scroll) ion-footer {
+  position: absolute;
+  bottom: 0;
+
+  width: var(--width);
 }

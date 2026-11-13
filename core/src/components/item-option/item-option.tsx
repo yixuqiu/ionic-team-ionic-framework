@@ -1,5 +1,7 @@
 import type { ComponentInterface } from '@stencil/core';
-import { Component, Element, Host, Prop, h } from '@stencil/core';
+import { Component, Element, Host, Prop, forceUpdate, h } from '@stencil/core';
+import type { AttributeController } from '@utils/attribute-controller';
+import { createTabindexController } from '@utils/attribute-controller';
 import type { AnchorInterface, ButtonInterface } from '@utils/element-interface';
 import { createColorClasses } from '@utils/theme';
 
@@ -17,6 +19,8 @@ import type { Color } from '../../interface';
  * @slot end - Content is placed to the right of the option text in LTR, and to the left in RTL.
  *
  * @part native - The native HTML button or anchor element that wraps all child elements.
+ * @part inner - The inner wrapper element that arranges the option content.
+ * @part container - The container element that wraps the start, icon-only, default, and end slots.
  */
 @Component({
   tag: 'ion-item-option',
@@ -27,6 +31,8 @@ import type { Color } from '../../interface';
   shadow: true,
 })
 export class ItemOption implements ComponentInterface, AnchorInterface, ButtonInterface {
+  private tabindexController?: AttributeController;
+
   @Element() el!: HTMLElement;
 
   /**
@@ -78,6 +84,18 @@ export class ItemOption implements ComponentInterface, AnchorInterface, ButtonIn
    */
   @Prop() type: 'submit' | 'reset' | 'button' = 'button';
 
+  componentWillLoad() {
+    this.tabindexController = createTabindexController(this.el, () => forceUpdate(this));
+  }
+
+  connectedCallback() {
+    this.tabindexController?.init();
+  }
+
+  disconnectedCallback() {
+    this.tabindexController?.destroy();
+  }
+
   private onClick = (ev: Event) => {
     const el = (ev.target as HTMLElement).closest('ion-item-option');
     if (el) {
@@ -87,6 +105,7 @@ export class ItemOption implements ComponentInterface, AnchorInterface, ButtonIn
 
   render() {
     const { disabled, expandable, href } = this;
+    const tabindexAttributes = this.tabindexController?.attributes ?? {};
     const TagType = href === undefined ? 'button' : ('a' as any);
     const mode = getIonMode(this);
     const attrs =
@@ -108,10 +127,10 @@ export class ItemOption implements ComponentInterface, AnchorInterface, ButtonIn
           'ion-activatable': true,
         })}
       >
-        <TagType {...attrs} class="button-native" part="native" disabled={disabled}>
-          <span class="button-inner">
+        <TagType {...attrs} {...tabindexAttributes} class="button-native" part="native" disabled={disabled}>
+          <span class="button-inner" part="inner">
             <slot name="top"></slot>
-            <div class="horizontal-wrapper">
+            <div class="horizontal-wrapper" part="container">
               <slot name="start"></slot>
               <slot name="icon-only"></slot>
               <slot></slot>

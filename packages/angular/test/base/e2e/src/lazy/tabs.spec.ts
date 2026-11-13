@@ -1,488 +1,516 @@
-describe('Tabs', () => {
-  beforeEach(() => {
-    cy.visit('/lazy/tabs');
-  })
+import { test, expect } from '@playwright/test';
+import {
+  testStack,
+  testLifeCycle,
+  testTabTitle,
+  getSelectedTab,
+  testState,
+  testUrlContains,
+  testUrlEquals,
+  ionPageVisible,
+  ionPageHidden,
+  ionPageDoesNotExist,
+  ionTabClick
+} from '../../utils/test-utils';
 
-  describe('entry url - /tabs', () => {
-    it('should redirect and load tab-account', () => {
-      testTabTitle('Tab 1 - Page 1');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1']);
-      testState(1, 'account');
+test.describe('Tabs', () => {
+  test.describe('With IonRouterOutlet', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.goto('/lazy/tabs');
     });
 
-    it('should navigate between tabs and ionChange events should be dispatched', () => {
-      let tab = testTabTitle('Tab 1 - Page 1');
-      tab.find('.segment-changed').should('have.text', 'false');
+    test.describe('entry url - /tabs', () => {
+      test('should redirect and load tab-account', async ({ page }) => {
+        await testTabTitle(page, 'Tab 1 - Page 1');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1']);
+        await testState(page, 1, 'account');
+      });
 
-      cy.get('#tab-button-contact').click();
-      tab = testTabTitle('Tab 2 - Page 1');
-      tab.find('.segment-changed').should('have.text', 'false');
+      test('should navigate between tabs and ionChange events should be dispatched', async ({ page }) => {
+        let tab = await testTabTitle(page, 'Tab 1 - Page 1');
+        await expect(tab.locator('.segment-changed')).toHaveText('false');
+
+        await page.locator('#tab-button-contact').click();
+        tab = await testTabTitle(page, 'Tab 2 - Page 1');
+        await expect(tab.locator('.segment-changed')).toHaveText('false');
+      });
+
+      test.describe('when navigating between tabs', () => {
+        test('should emit ionTabsWillChange before setting the selected tab', async ({ page }) => {
+          await expect(page.locator('#ionTabsWillChangeCounter')).toHaveText('1');
+          await expect(page.locator('#ionTabsWillChangeEvent')).toHaveText('account');
+          await expect(page.locator('#ionTabsWillChangeSelectedTab')).toHaveText('');
+
+          await expect(page.locator('#ionTabsDidChangeCounter')).toHaveText('1');
+          await expect(page.locator('#ionTabsDidChangeEvent')).toHaveText('account');
+          await expect(page.locator('#ionTabsDidChangeSelectedTab')).toHaveText('account');
+
+          await page.locator('#tab-button-contact').click();
+
+          await expect(page.locator('#ionTabsWillChangeCounter')).toHaveText('2');
+          await expect(page.locator('#ionTabsWillChangeEvent')).toHaveText('contact');
+          await expect(page.locator('#ionTabsWillChangeSelectedTab')).toHaveText('account');
+
+          await expect(page.locator('#ionTabsDidChangeCounter')).toHaveText('2');
+          await expect(page.locator('#ionTabsDidChangeEvent')).toHaveText('contact');
+          await expect(page.locator('#ionTabsDidChangeSelectedTab')).toHaveText('contact');
+        });
+      });
+
+      test('should simulate stack + double tab click', async ({ page }) => {
+        let tab = await getSelectedTab(page);
+        await tab.locator('#goto-tab1-page2').click();
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab1-nested']);
+        await testState(page, 1, 'account');
+
+        tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-back-button')).toBeVisible();
+
+        await page.locator('#tab-button-contact').click();
+        await testTabTitle(page, 'Tab 2 - Page 1');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab1-nested', 'app-tabs-tab2']);
+        await testState(page, 2, 'contact');
+
+        await page.locator('#tab-button-account').click();
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab1-nested', 'app-tabs-tab2']);
+        await testState(page, 3, 'account');
+
+        tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-back-button')).toBeVisible();
+
+        await page.locator('#tab-button-account').click();
+        await testTabTitle(page, 'Tab 1 - Page 1');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab2']);
+        await testState(page, 3, 'account');
+      });
+
+      test('should simulate stack + back button click', async ({ page }) => {
+        const tab = await getSelectedTab(page);
+        await tab.locator('#goto-tab1-page2').click();
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testState(page, 1, 'account');
+
+        await page.locator('#tab-button-contact').click();
+        await testTabTitle(page, 'Tab 2 - Page 1');
+        await testState(page, 2, 'contact');
+
+        await page.locator('#tab-button-account').click();
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testState(page, 3, 'account');
+
+        await page.locator('ion-back-button').click();
+        await testTabTitle(page, 'Tab 1 - Page 1');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab2']);
+        await testState(page, 3, 'account');
+      });
+
+      test('should navigate deep then go home', async ({ page }) => {
+        const tab = await getSelectedTab(page);
+        await tab.locator('#goto-tab1-page2').click();
+        await ionPageVisible(page, 'app-tabs-tab1-nested');
+        await ionPageHidden(page, 'app-tabs-tab1');
+
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+
+        await page.locator('#goto-next').click();
+        await ionPageVisible(page, 'app-tabs-tab1-nested:last-of-type');
+        await ionPageHidden(page, 'app-tabs-tab1-nested:first-of-type');
+
+        await testTabTitle(page, 'Tab 1 - Page 2 (2)');
+
+        await page.locator('#tab-button-contact').click();
+        await ionPageVisible(page, 'app-tabs-tab2');
+        await ionPageHidden(page, 'app-tabs-tab1-nested:last-of-type');
+
+        await testTabTitle(page, 'Tab 2 - Page 1');
+
+        await page.locator('#tab-button-account').click();
+        await ionPageVisible(page, 'app-tabs-tab1-nested:last-of-type');
+        await ionPageHidden(page, 'app-tabs-tab2');
+
+        await testTabTitle(page, 'Tab 1 - Page 2 (2)');
+        await testStack(page, 'ion-tabs ion-router-outlet', [
+          'app-tabs-tab1',
+          'app-tabs-tab1-nested',
+          'app-tabs-tab1-nested',
+          'app-tabs-tab2'
+        ]);
+
+        await page.locator('#tab-button-account').click();
+
+        /**
+         * Wait for the leaving view to
+         * be unmounted otherwise testTabTitle
+         * may get the leaving view before it
+         * is unmounted.
+         */
+        await ionPageVisible(page, 'app-tabs-tab1');
+        await ionPageDoesNotExist(page, 'app-tabs-tab1-nested');
+
+        await testTabTitle(page, 'Tab 1 - Page 1');
+        await testStack(page, 'ion-tabs ion-router-outlet', [
+          'app-tabs-tab1',
+          'app-tabs-tab2'
+        ]);
+      });
+
+      test('should switch tabs and go back', async ({ page }) => {
+        await page.locator('#tab-button-contact').click();
+        const tab = await testTabTitle(page, 'Tab 2 - Page 1');
+
+        await tab.locator('#goto-tab1-page1').click();
+        await testTabTitle(page, 'Tab 1 - Page 1');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab2']);
+      });
+
+      test('should switch tabs and go to nested', async ({ page }) => {
+        await page.locator('#tab-button-contact').click();
+        const tab = await testTabTitle(page, 'Tab 2 - Page 1');
+
+        await tab.locator('#goto-tab1-page2').click();
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab2', 'app-tabs-tab1-nested']);
+      });
+
+      test('should load lazy loaded tab', async ({ page }) => {
+        await page.locator('#tab-button-lazy').click();
+        await ionPageVisible(page, 'app-tabs-tab3');
+        await testTabTitle(page, 'Tab 3 - Page 1');
+      });
+
+      test('should use ion-back-button defaultHref', async ({ page }) => {
+        let tab = await getSelectedTab(page);
+        await tab.locator('#goto-tab3-page2').click();
+        await testTabTitle(page, 'Tab 3 - Page 2');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab3-nested']);
+
+        tab = await getSelectedTab(page);
+        await tab.locator('ion-back-button').click();
+        await testTabTitle(page, 'Tab 3 - Page 1');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab3']);
+      });
+
+      test('should preserve navigation extras when switching tabs', async ({ page }) => {
+        const expectUrlToContain = 'search=hello#fragment';
+        let tab = await getSelectedTab(page);
+        await tab.locator('#goto-nested-page1-with-query-params').click();
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testUrlContains(page, expectUrlToContain);
+
+        await page.locator('#tab-button-contact').click();
+        await testTabTitle(page, 'Tab 2 - Page 1');
+
+        await page.locator('#tab-button-account').click();
+        tab = await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testUrlContains(page, expectUrlToContain);
+      });
+
+      test('should set root when clicking on an active tab to navigate to the root', async ({ page }) => {
+        const expectNestedTabUrlToContain = 'search=hello#fragment';
+        const url = page.url();
+        const tab = await getSelectedTab(page);
+        await tab.locator('#goto-nested-page1-with-query-params').click();
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testUrlContains(page, expectNestedTabUrlToContain);
+
+        await page.locator('#tab-button-account').click();
+        await testTabTitle(page, 'Tab 1 - Page 1');
+
+        await testUrlEquals(page, await url);
+      });
     });
 
-    describe('when navigating between tabs', () => {
-
-      it('should emit ionTabsWillChange before setting the selected tab', () => {
-        cy.get('#ionTabsWillChangeCounter').should('have.text', '1');
-        cy.get('#ionTabsWillChangeEvent').should('have.text', 'account');
-        cy.get('#ionTabsWillChangeSelectedTab').should('have.text', '');
-
-        cy.get('#ionTabsDidChangeCounter').should('have.text', '1');
-        cy.get('#ionTabsDidChangeEvent').should('have.text', 'account');
-        cy.get('#ionTabsDidChangeSelectedTab').should('have.text', 'account');
-
-        cy.get('#tab-button-contact').click();
-
-        cy.get('#ionTabsWillChangeCounter').should('have.text', '2');
-        cy.get('#ionTabsWillChangeEvent').should('have.text', 'contact');
-        cy.get('#ionTabsWillChangeSelectedTab').should('have.text', 'account');
-
-        cy.get('#ionTabsDidChangeCounter').should('have.text', '2');
-        cy.get('#ionTabsDidChangeEvent').should('have.text', 'contact');
-        cy.get('#ionTabsDidChangeSelectedTab').should('have.text', 'contact');
-      })
-
-    });
-
-    it('should simulate stack + double tab click', () => {
-      let tab = getSelectedTab();
-      tab.find('#goto-tab1-page2').click();
-      testTabTitle('Tab 1 - Page 2 (1)');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab1-nested']);
-      testState(1, 'account');
-
-      // When you call find on tab above it changes the value of tab
-      // so we need to redefine it
-      tab = getSelectedTab();
-      tab.find('ion-back-button').should('be.visible');
-
-      cy.get('#tab-button-contact').click();
-      testTabTitle('Tab 2 - Page 1');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab1-nested', 'app-tabs-tab2']);
-      testState(2, 'contact');
-
-      cy.get('#tab-button-account').click();
-      testTabTitle('Tab 1 - Page 2 (1)');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab1-nested', 'app-tabs-tab2']);
-      testState(3, 'account');
-
-      tab = getSelectedTab();
-      tab.find('ion-back-button').should('be.visible');
-
-      cy.get('#tab-button-account').click();
-      testTabTitle('Tab 1 - Page 1');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab2']);
-      testState(3, 'account');
-    });
-
-    it('should simulate stack + back button click', () => {
-      const tab = getSelectedTab();
-      tab.find('#goto-tab1-page2').click();
-      testTabTitle('Tab 1 - Page 2 (1)');
-      testState(1, 'account');
-
-      cy.get('#tab-button-contact').click();
-      testTabTitle('Tab 2 - Page 1');
-      testState(2, 'contact');
-
-      cy.get('#tab-button-account').click();
-      testTabTitle('Tab 1 - Page 2 (1)');
-      testState(3, 'account');
-
-      cy.get('ion-back-button').click();
-      testTabTitle('Tab 1 - Page 1');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab2']);
-      testState(3, 'account');
-    });
-
-    it('should navigate deep then go home', () => {
-      const tab = getSelectedTab();
-      tab.find('#goto-tab1-page2').click();
-      cy.ionPageVisible('app-tabs-tab1-nested');
-      cy.ionPageHidden('app-tabs-tab1');
-
-      testTabTitle('Tab 1 - Page 2 (1)');
-
-      cy.get('#goto-next').click();
-      cy.ionPageVisible('app-tabs-tab1-nested:last-of-type');
-      cy.ionPageHidden('app-tabs-tab1-nested:first-of-type');
-
-      testTabTitle('Tab 1 - Page 2 (2)');
-
-      cy.get('#tab-button-contact').click();
-      cy.ionPageVisible('app-tabs-tab2');
-      cy.ionPageHidden('app-tabs-tab1-nested:last-of-type');
-
-      testTabTitle('Tab 2 - Page 1');
-
-      cy.get('#tab-button-account').click();
-      cy.ionPageVisible('app-tabs-tab1-nested:last-of-type');
-      cy.ionPageHidden('app-tabs-tab2');
-
-      testTabTitle('Tab 1 - Page 2 (2)');
-      cy.testStack('ion-tabs ion-router-outlet', [
-        'app-tabs-tab1',
-        'app-tabs-tab1-nested',
-        'app-tabs-tab1-nested',
-        'app-tabs-tab2'
-      ]);
-
-      cy.get('#tab-button-account').click();
-
-      /**
-       * Wait for the leaving view to
-       * be unmounted otherwise testTabTitle
-       * may get the leaving view before it
-       * is unmounted.
-       */
-      cy.ionPageVisible('app-tabs-tab1');
-      cy.ionPageDoesNotExist('app-tabs-tab1-nested');
-
-      testTabTitle('Tab 1 - Page 1');
-      cy.testStack('ion-tabs ion-router-outlet', [
-        'app-tabs-tab1',
-        'app-tabs-tab2'
-      ]);
-    });
-
-    it('should switch tabs and go back', () => {
-      cy.get('#tab-button-contact').click();
-      const tab = testTabTitle('Tab 2 - Page 1');
-
-      tab.find('#goto-tab1-page1').click();
-      testTabTitle('Tab 1 - Page 1');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab2']);
-    });
-
-    it('should switch tabs and go to nested', () => {
-      cy.get('#tab-button-contact').click();
-      const tab = testTabTitle('Tab 2 - Page 1');
-
-      tab.find('#goto-tab1-page2').click();
-      testTabTitle('Tab 1 - Page 2 (1)');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab2', 'app-tabs-tab1-nested']);
-    });
-
-    it('should load lazy loaded tab', () => {
-      cy.get('#tab-button-lazy').click();
-      cy.ionPageVisible('app-tabs-tab3');
-      testTabTitle('Tab 3 - Page 1');
-    });
-
-    it('should use ion-back-button defaultHref', () => {
-      let tab = getSelectedTab();
-      tab.find('#goto-tab3-page2').click();
-      testTabTitle('Tab 3 - Page 2');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab3-nested']);
-
-      tab = getSelectedTab();
-      tab.find('ion-back-button').click();
-      testTabTitle('Tab 3 - Page 1');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1', 'app-tabs-tab3']);
-    });
-
-    it('should preserve navigation extras when switching tabs', () => {
-      const expectUrlToContain = 'search=hello#fragment';
-      let tab = getSelectedTab();
-      tab.find('#goto-nested-page1-with-query-params').click();
-      testTabTitle('Tab 1 - Page 2 (1)');
-      testUrlContains(expectUrlToContain);
-
-      cy.get('#tab-button-contact').click();
-      testTabTitle('Tab 2 - Page 1');
-
-      cy.get('#tab-button-account').click();
-      tab = testTabTitle('Tab 1 - Page 2 (1)');
-      testUrlContains(expectUrlToContain);
-    });
-
-    it('should set root when clicking on an active tab to navigate to the root', () => {
+    test.describe('entry tab contains navigation extras', () => {
       const expectNestedTabUrlToContain = 'search=hello#fragment';
-      cy.url().then(url => {
-        const tab = getSelectedTab();
-        tab.find('#goto-nested-page1-with-query-params').click();
-        testTabTitle('Tab 1 - Page 2 (1)');
-        testUrlContains(expectNestedTabUrlToContain);
+      const rootUrlParams = 'test=123#rootFragment';
+      const rootUrl = `/lazy/tabs/account?${rootUrlParams}`;
 
-        cy.get('#tab-button-account').click();
-        testTabTitle('Tab 1 - Page 1');
+      test.beforeEach(async ({ page }) => {
+        await page.goto(rootUrl);
+      });
 
-        testUrlEquals(url);
-      })
+      test('should preserve root url navigation extras when clicking on an active tab to navigate to the root', async ({ page }) => {
+        const tab = await getSelectedTab(page);
+        await tab.locator('#goto-nested-page1-with-query-params').click();
+
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testUrlContains(page, expectNestedTabUrlToContain);
+
+        await page.locator('#tab-button-account').click();
+        await testTabTitle(page, 'Tab 1 - Page 1');
+
+        await testUrlContains(page, rootUrl);
+      });
+
+      test('should preserve root url navigation extras when changing tabs', async ({ page }) => {
+        await getSelectedTab(page);
+        await page.locator('#tab-button-contact').click();
+        await testTabTitle(page, 'Tab 2 - Page 1');
+
+        await page.locator('#tab-button-account').click();
+        await testTabTitle(page, 'Tab 1 - Page 1');
+
+        await testUrlContains(page, rootUrl);
+      });
+
+      test('should navigate deep then go home and preserve navigation extras', async ({ page }) => {
+        let tab = await getSelectedTab(page);
+        await tab.locator('#goto-tab1-page2').click();
+        await ionPageVisible(page, 'app-tabs-tab1-nested');
+        await ionPageHidden(page, 'app-tabs-tab1');
+
+        tab = await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+
+        await tab.locator('#goto-next').click();
+        await ionPageVisible(page, 'app-tabs-tab1-nested:last-of-type');
+        await ionPageHidden(page, 'app-tabs-tab1-nested:first-of-type');
+
+        await testTabTitle(page, 'Tab 1 - Page 2 (2)');
+
+        await ionTabClick(page, 'Tab Two');
+        await ionPageVisible(page, 'app-tabs-tab2');
+        await ionPageHidden(page, 'app-tabs-tab1-nested:last-of-type');
+
+        await testTabTitle(page, 'Tab 2 - Page 1');
+
+        await ionTabClick(page, 'Tab One');
+        await ionPageVisible(page, 'app-tabs-tab1-nested:last-of-type');
+        await ionPageHidden(page, 'app-tabs-tab2');
+
+        await testTabTitle(page, 'Tab 1 - Page 2 (2)');
+
+        await ionTabClick(page, 'Tab One');
+        /**
+         * Wait for the leaving view to
+         * be unmounted otherwise testTabTitle
+         * may get the leaving view before it
+         * is unmounted.
+         */
+        await ionPageVisible(page, 'app-tabs-tab1');
+        await ionPageDoesNotExist(page, 'app-tabs-tab1-nested');
+
+        await testTabTitle(page, 'Tab 1 - Page 1');
+
+        await testUrlContains(page, rootUrl);
+      });
     });
-  })
 
-  describe('entry tab contains navigation extras', () => {
-    const expectNestedTabUrlToContain = 'search=hello#fragment';
-    const rootUrlParams = 'test=123#rootFragment';
-    const rootUrl = `/lazy/tabs/account?${rootUrlParams}`;
+    test.describe('entry url - /tabs/account', () => {
+      test.beforeEach(async ({ page }) => {
+        await page.goto('/lazy/tabs/account');
+      });
 
-    beforeEach(() => {
-      cy.visit(rootUrl);
-    })
+      test('should pop to previous view when leaving tabs outlet', async ({ page }) => {
+        let tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-title')).toContainText('Tab 1 - Page 1');
 
-    it('should preserve root url navigation extras when clicking on an active tab to navigate to the root', () => {
-      const tab = getSelectedTab();
-      tab.find('#goto-nested-page1-with-query-params').click();
+        await page.locator('#goto-tab1-page2').click();
 
-      testTabTitle('Tab 1 - Page 2 (1)');
-      testUrlContains(expectNestedTabUrlToContain);
+        tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-title')).toContainText('Tab 1 - Page 2 (1)');
 
-      cy.get('#tab-button-account').click();
-      testTabTitle('Tab 1 - Page 1');
+        await page.locator('#goto-global').click();
 
-      testUrlContains(rootUrl);
+        // Wait for navigation to complete
+        await page.waitForTimeout(100);
+
+        // Check for the global page title - target the specific title in the global page
+        await expect(page.locator('ion-title').filter({ hasText: 'Global Page' })).toBeVisible();
+
+        await page.locator('#goto-prev-pop').click();
+
+        tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-title')).toContainText('Tab 1 - Page 2 (1)');
+
+        await page.locator('#goto-prev').click();
+
+        tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-title')).toContainText('Tab 1 - Page 1');
+
+        /**
+         * Verifies that when entering the tabs outlet directly,
+         * the navController.pop() method does not pop the previous view,
+         * when you are at the root of the tabs outlet.
+         */
+        await page.locator('#goto-previous-page').click();
+
+        tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-title')).toContainText('Tab 1 - Page 1');
+      });
     });
 
-    it('should preserve root url navigation extras when changing tabs', () => {
-      getSelectedTab();
-      cy.get('#tab-button-contact').click();
-      testTabTitle('Tab 2 - Page 1');
+    test.describe('entry url - /', () => {
+      test('should pop to the root outlet from the tabs outlet', async ({ page }) => {
+        await page.goto('/lazy/');
 
-      cy.get('#tab-button-account').click();
-      testTabTitle('Tab 1 - Page 1');
+        await expect(page.locator('ion-title')).toContainText('Test App');
 
-      testUrlContains(rootUrl);
+        await page.locator('ion-item[routerlink="/lazy/tabs"]').click();
+
+        let tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-title')).toContainText('Tab 1 - Page 1');
+
+        await page.locator('#goto-tab1-page2').click();
+
+        tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-title')).toContainText('Tab 1 - Page 2 (1)');
+
+        await page.locator('#goto-global').click();
+
+        // Wait for navigation to complete
+        await page.waitForTimeout(100);
+
+        // Check for the global page title - target the specific title in the global page
+        await expect(page.locator('ion-title').filter({ hasText: 'Global Page' })).toBeVisible();
+
+        await page.locator('#goto-prev-pop').click();
+
+        tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-title')).toContainText('Tab 1 - Page 2 (1)');
+
+        await page.locator('#goto-prev').click();
+
+        tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-title')).toContainText('Tab 1 - Page 1');
+
+        await page.locator('#goto-previous-page').click();
+
+        // Wait for navigation to complete
+        await page.waitForTimeout(100);
+
+        // Check for the root app title - target the specific title that contains "Test App"
+        await expect(page.locator('ion-title').filter({ hasText: 'Test App' })).toBeVisible();
+      });
     });
 
-    it('should navigate deep then go home and preserve navigation extras', () => {
-      let tab = getSelectedTab();
-      tab.find('#goto-tab1-page2').click();
-      cy.ionPageVisible('app-tabs-tab1-nested');
-      cy.ionPageHidden('app-tabs-tab1');
+    test.describe('entry url - /tabs/account/nested/1', () => {
+      test.beforeEach(async ({ page }) => {
+        await page.goto('/lazy/tabs/account/nested/1');
+      });
 
-      tab = testTabTitle('Tab 1 - Page 2 (1)');
+      test('should only display the back-button when there is a page in the stack', async ({ page }) => {
+        let tab = await getSelectedTab(page);
+        await expect(tab.locator('ion-back-button')).not.toBeVisible();
+        await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1-nested']);
 
-      tab.find('#goto-next').click();
-      cy.ionPageVisible('app-tabs-tab1-nested:last-of-type');
-      cy.ionPageHidden('app-tabs-tab1-nested:first-of-type');
+        await page.locator('#tab-button-account').click();
+        tab = await testTabTitle(page, 'Tab 1 - Page 1');
 
-      testTabTitle('Tab 1 - Page 2 (2)');
+        await tab.locator('#goto-tab1-page2').click();
+        tab = await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await expect(tab.locator('ion-back-button')).toBeVisible();
+      });
 
-      cy.ionTabClick('Tab Two');
-      cy.ionPageVisible('app-tabs-tab2');
-      cy.ionPageHidden('app-tabs-tab1-nested:last-of-type');
+      test('should not reuse the same page', async ({ page }) => {
+        let tab = await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await tab.locator('#goto-next').click();
+        tab = await testTabTitle(page, 'Tab 1 - Page 2 (2)');
 
-      testTabTitle('Tab 2 - Page 1');
+        await tab.locator('#goto-next').click();
+        tab = await testTabTitle(page, 'Tab 1 - Page 2 (3)');
 
-      cy.ionTabClick('Tab One');
-      cy.ionPageVisible('app-tabs-tab1-nested:last-of-type');
-      cy.ionPageHidden('app-tabs-tab2');
+        await testStack(page, 'ion-tabs ion-router-outlet', [
+          'app-tabs-tab1-nested',
+          'app-tabs-tab1-nested',
+          'app-tabs-tab1-nested'
+        ]);
 
-      testTabTitle('Tab 1 - Page 2 (2)');
+        tab = await getSelectedTab(page);
+        await tab.locator('ion-back-button').click();
+        tab = await testTabTitle(page, 'Tab 1 - Page 2 (2)');
+        await tab.locator('ion-back-button').click();
+        tab = await testTabTitle(page, 'Tab 1 - Page 2 (1)');
 
-      cy.ionTabClick('Tab One');
-      /**
-       * Wait for the leaving view to
-       * be unmounted otherwise testTabTitle
-       * may get the leaving view before it
-       * is unmounted.
-       */
-      cy.ionPageVisible('app-tabs-tab1');
-      cy.ionPageDoesNotExist('app-tabs-tab1-nested');
+        await expect(tab.locator('ion-back-button')).not.toBeVisible();
 
-      testTabTitle('Tab 1 - Page 1');
-
-      testUrlContains(rootUrl);
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab1-nested']);
+      });
     });
-  })
 
-  describe('entry url - /tabs/account', () => {
-    beforeEach(() => {
-      cy.visit('/lazy/tabs/account');
+    test.describe('entry url - /tabs/lazy', () => {
+      test.beforeEach(async ({ page }) => {
+        await page.goto('/lazy/tabs/lazy');
+      });
+
+      test('should not display the back-button if coming from a different stack', async ({ page }) => {
+        let tab = await testTabTitle(page, 'Tab 3 - Page 1');
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab3']);
+
+        tab = await getSelectedTab(page);
+        await tab.locator('#goto-tab1-page2').click();
+        await testStack(page, 'ion-tabs ion-router-outlet', ['app-tabs-tab3', 'app-tabs-tab1-nested']);
+
+        tab = await testTabTitle(page, 'Tab 1 - Page 2 (1)');
+        await expect(tab.locator('ion-back-button')).not.toBeVisible();
+      });
     });
-    it('should pop to previous view when leaving tabs outlet', () => {
 
-      cy.get('ion-title').should('contain.text', 'Tab 1 - Page 1');
+    test.describe('enter url - /tabs/contact/one', () => {
+      test.beforeEach(async ({ page }) => {
+        await page.goto('/lazy/tabs/contact/one');
+      });
 
-      cy.get('#goto-tab1-page2').click();
+      test('should return to correct tab after going to page in different outlet', async ({ page }) => {
+        const tab = await getSelectedTab(page);
+        await tab.locator('#goto-nested-page1').click();
+        await testStack(page, 'app-nested-outlet ion-router-outlet', ['app-nested-outlet-page']);
 
-      cy.get('ion-title').should('contain.text', 'Tab 1 - Page 2 (1)');
+        const nestedOutlet = page.locator('app-nested-outlet');
+        await nestedOutlet.locator('ion-back-button').click();
 
-      cy.get('#goto-global').click();
-
-      cy.get('ion-title').should('contain.text', 'Global Page');
-
-      cy.get('#goto-prev-pop').click();
-
-      cy.get('ion-title').should('contain.text', 'Tab 1 - Page 2 (1)');
-
-      cy.get('#goto-prev').click();
-
-      cy.get('ion-title').should('contain.text', 'Tab 1 - Page 1');
-
-      /**
-       * Verifies that when entering the tabs outlet directly,
-       * the navController.pop() method does not pop the previous view,
-       * when you are at the root of the tabs outlet.
-       */
-      cy.get('#goto-previous-page').click();
-      cy.get('ion-title').should('contain.text', 'Tab 1 - Page 1');
+        await testTabTitle(page, 'Tab 2 - Page 1');
+      });
     });
   });
 
-  describe('entry url - /', () => {
-    it('should pop to the root outlet from the tabs outlet', () => {
-      cy.visit('/lazy/');
+  test.describe('Without IonRouterOutlet', () => {
+    test.beforeEach(async ({ page }) => {
+      await page.goto('/lazy/tabs-basic');
+    });
 
-      cy.get('ion-title').should('contain.text', 'Test App');
+    test('should show correct tab when clicking the tab button', async ({ page }) => {
+      await expect(page.locator('ion-tab[tab="tab1"]')).toBeVisible();
+      await expect(page.locator('ion-tab[tab="tab2"]')).not.toBeVisible();
 
-      cy.get('ion-item').contains('Tabs test').click();
+      await page.locator('ion-tab-button[tab="tab2"]').click();
 
-      cy.get('ion-title').should('contain.text', 'Tab 1 - Page 1');
+      await expect(page.locator('ion-tab[tab="tab1"]')).not.toBeVisible();
+      await expect(page.locator('ion-tab[tab="tab2"]')).toBeVisible();
+    });
 
-      cy.get('#goto-tab1-page2').click();
+    test('should not change the URL when clicking the tab button', async ({ page }) => {
+      await expect(page).toHaveURL(/.*\/tabs-basic/);
 
-      cy.get('ion-title').should('contain.text', 'Tab 1 - Page 2 (1)');
+      await page.locator('ion-tab-button[tab="tab2"]').click();
 
-      cy.get('#goto-global').click();
-
-      cy.get('ion-title').should('contain.text', 'Global Page');
-
-      cy.get('#goto-prev-pop').click();
-
-      cy.get('ion-title').should('contain.text', 'Tab 1 - Page 2 (1)');
-
-      cy.get('#goto-prev').click();
-
-      cy.get('ion-title').should('contain.text', 'Tab 1 - Page 1');
-
-      cy.get('#goto-previous-page').click();
-
-      cy.get('ion-title').should('contain.text', 'Test App');
-
+      await expect(page).toHaveURL(/.*\/tabs-basic/);
     });
   });
-
-
-  describe('entry url - /tabs/account/nested/1', () => {
-    beforeEach(() => {
-      cy.visit('/lazy/tabs/account/nested/1');
-    })
-
-    it('should only display the back-button when there is a page in the stack', () => {
-      let tab = getSelectedTab();
-      tab.find('ion-back-button').should('not.be.visible');
-      testTabTitle('Tab 1 - Page 2 (1)');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1-nested']);
-
-      cy.get('#tab-button-account').click();
-      tab = testTabTitle('Tab 1 - Page 1');
-
-      tab.find('#goto-tab1-page2').click();
-      tab = testTabTitle('Tab 1 - Page 2 (1)');
-      tab.find('ion-back-button').should('be.visible');
-    });
-
-    it('should not reuse the same page', () => {
-      let tab = testTabTitle('Tab 1 - Page 2 (1)');
-      tab.find('#goto-next').click();
-      tab = testTabTitle('Tab 1 - Page 2 (2)');
-
-      tab.find('#goto-next').click();
-      tab = testTabTitle('Tab 1 - Page 2 (3)');
-
-      cy.testStack('ion-tabs ion-router-outlet', [
-        'app-tabs-tab1-nested',
-        'app-tabs-tab1-nested',
-        'app-tabs-tab1-nested'
-      ]);
-
-      tab = getSelectedTab();
-      tab.find('ion-back-button').click();
-      tab = testTabTitle('Tab 1 - Page 2 (2)');
-      tab.find('ion-back-button').click();
-      tab = testTabTitle('Tab 1 - Page 2 (1)');
-
-      tab.find('ion-back-button').should('not.be.visible');
-
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab1-nested']);
-    });
-  })
-
-  describe('entry url - /tabs/lazy', () => {
-    beforeEach(() => {
-      cy.visit('/lazy/tabs/lazy');
-    });
-
-    it('should not display the back-button if coming from a different stack', () => {
-      let tab = testTabTitle('Tab 3 - Page 1');
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab3']);
-
-      tab = getSelectedTab();
-      tab.find('#goto-tab1-page2').click();
-      cy.testStack('ion-tabs ion-router-outlet', ['app-tabs-tab3', 'app-tabs-tab1-nested']);
-
-      tab = testTabTitle('Tab 1 - Page 2 (1)');
-      tab.find('ion-back-button').should('not.be.visible');
-    });
-  })
-
-  describe('enter url - /tabs/contact/one', () => {
-    beforeEach(() => {
-      cy.visit('/lazy/tabs/contact/one');
-    });
-
-    it('should return to correct tab after going to page in different outlet', () => {
-      const tab = getSelectedTab();
-      tab.find('#goto-nested-page1').click();
-      cy.testStack('app-nested-outlet ion-router-outlet', ['app-nested-outlet-page']);
-
-      const nestedOutlet = cy.get('app-nested-outlet');
-      nestedOutlet.find('ion-back-button').click();
-
-      testTabTitle('Tab 2 - Page 1');
-    });
-  })
-})
-
-it('Tabs should support conditional slots', () => {
-  cy.visit('/lazy/tabs-slots');
-
-  cy.get('ion-tabs .tabs-inner + ion-tab-bar').should('have.length', 1);
-
-  // Click the button to change the slot to the top
-  cy.get('#set-slot-top').click();
-
-  // The tab bar should be removed from the bottom
-  cy.get('ion-tabs .tabs-inner + ion-tab-bar').should('have.length', 0);
-
-  // The tab bar should be added to the top
-  cy.get('ion-tabs ion-tab-bar + .tabs-inner').should('have.length', 1);
-
-  // Click the button to change the slot to the bottom
-  cy.get('#set-slot-bottom').click();
-
-  // The tab bar should be removed from the top
-  cy.get('ion-tabs ion-tab-bar + .tabs-inner').should('have.length', 0);
-
-  // The tab bar should be added to the bottom
-  cy.get('ion-tabs .tabs-inner + ion-tab-bar').should('have.length', 1);
 });
 
+test('Tabs should support conditional slots', async ({ page }) => {
+  await page.goto('/lazy/tabs-slots');
 
-function testTabTitle(title) {
-  const tab = getSelectedTab();
+  await expect(page.locator('ion-tabs .tabs-inner + ion-tab-bar')).toHaveCount(1);
 
-  // Find is used to get a direct descendant instead of get
-  tab.find('ion-title').should('have.text', title);
-  return getSelectedTab();
-}
+  // Click the button to change the slot to the top
+  await page.locator('#set-slot-top').click();
 
-function getSelectedTab() {
-  cy.get('ion-tabs ion-router-outlet > *:not(.ion-page-hidden)').should('have.length', 1);
-  return cy.get('ion-tabs ion-router-outlet > *:not(.ion-page-hidden)').first();
-}
+  // The tab bar should be removed from the bottom
+  await expect(page.locator('ion-tabs .tabs-inner + ion-tab-bar')).toHaveCount(0);
 
-function testState(count, tab) {
-  cy.get('#tabs-state').should('have.text', `${count}.${tab}`);
-}
+  // The tab bar should be added to the top
+  await expect(page.locator('ion-tabs ion-tab-bar + .tabs-inner')).toHaveCount(1);
 
-function testUrlContains(urlFragment) {
-  cy.location().should((location) => {
-    expect(location.href).to.contain(urlFragment);
-  });
-}
+  // Click the button to change the slot to the bottom
+  await page.locator('#set-slot-bottom').click();
 
-function testUrlEquals(url) {
-  cy.url().should('eq', url);
-}
+  // The tab bar should be removed from the top
+  await expect(page.locator('ion-tabs ion-tab-bar + .tabs-inner')).toHaveCount(0);
+
+  // The tab bar should be added to the bottom
+  await expect(page.locator('ion-tabs .tabs-inner + ion-tab-bar')).toHaveCount(1);
+});

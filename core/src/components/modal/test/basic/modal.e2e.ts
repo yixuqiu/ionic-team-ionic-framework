@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test';
-import { configs, test, Viewports } from '@utils/test/playwright';
 import type { E2EPage } from '@utils/test/playwright';
+import { configs, test, Viewports } from '@utils/test/playwright';
 
 configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => {
   test.describe(title('modal: focus trapping'), () => {
@@ -104,6 +104,28 @@ configs().forEach(({ title, screenshot, config }) => {
 });
 
 configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => {
+  test.describe(title('modal: parent removal observer'), () => {
+    test('should not set up parentRemovalObserver for controller-created modals', async ({ page }, testInfo) => {
+      testInfo.annotations.push({
+        type: 'issue',
+        description: 'FW-6766',
+      });
+
+      await page.goto('/src/components/modal/test/basic', config);
+      const ionModalDidPresent = await page.spyOnEvent('ionModalDidPresent');
+
+      await page.click('#basic-modal');
+      await ionModalDidPresent.next();
+
+      const modal = page.locator('ion-modal');
+      const hasObserver = await modal.evaluate((el: any) => {
+        return el.parentRemovalObserver !== undefined;
+      });
+
+      expect(hasObserver).toBe(false);
+    });
+  });
+
   test.describe(title('modal: backdrop'), () => {
     test.beforeEach(async ({ page }) => {
       await page.goto('/src/components/modal/test/basic', config);
@@ -145,7 +167,9 @@ configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => 
       await modal.evaluate((el: HTMLIonModalElement) => el.setCurrentBreakpoint(0.5));
 
       expect(warnings.length).toBe(1);
-      expect(warnings[0]).toBe('[Ionic Warning]: setCurrentBreakpoint is only supported on sheet modals.');
+      expect(warnings[0]).toBe(
+        '[Ionic Warning]: [ion-modal] - setCurrentBreakpoint is only supported on sheet modals.'
+      );
     });
 
     test('it should return undefined when getting the breakpoint on a non-sheet modal', async ({ page }) => {

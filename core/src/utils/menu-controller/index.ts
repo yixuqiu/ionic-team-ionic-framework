@@ -1,6 +1,6 @@
 import { doc } from '@utils/browser';
 import type { BackButtonEvent } from '@utils/hardware-back-button';
-import { MENU_BACK_BUTTON_PRIORITY } from '@utils/hardware-back-button';
+import { MENU_BACK_BUTTON_PRIORITY, addCloseWatcherCondition } from '@utils/hardware-back-button';
 import { printIonWarning } from '@utils/logging';
 
 import type { MenuI, MenuControllerI } from '../../components/menu/menu-interface';
@@ -58,7 +58,7 @@ const createMenuController = (): MenuControllerI => {
   const isOpen = async (menu?: string | null): Promise<boolean> => {
     if (menu != null) {
       const menuEl = await get(menu);
-      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain
+
       return menuEl !== undefined && menuEl.isOpen();
     } else {
       const menuEl = await getOpen();
@@ -174,7 +174,7 @@ const createMenuController = (): MenuControllerI => {
     }
   };
 
-  const _setOpen = async (menu: MenuI, shouldOpen: boolean, animated: boolean): Promise<boolean> => {
+  const _setOpen = async (menu: MenuI, shouldOpen: boolean, animated: boolean, role: string): Promise<boolean> => {
     if (isAnimatingSync()) {
       return false;
     }
@@ -184,7 +184,7 @@ const createMenuController = (): MenuControllerI => {
         await openedMenu.setOpen(false, false);
       }
     }
-    return menu._setOpen(shouldOpen, animated);
+    return menu._setOpen(shouldOpen, animated, role);
   };
 
   const _createAnimation = (type: string, menuCmp: MenuI) => {
@@ -229,6 +229,7 @@ const createMenuController = (): MenuControllerI => {
   registerAnimation('push', menuPushAnimation);
   registerAnimation('overlay', menuOverlayAnimation);
 
+  addCloseWatcherCondition(() => _getOpenSync() !== undefined);
   doc?.addEventListener('ionBackButton', (ev: BackButtonEvent) => {
     const openMenu = _getOpenSync();
     if (openMenu) {

@@ -11,7 +11,6 @@ import type { RouterDirection } from '../models/RouterDirection';
 import type { RouterOptions } from '../models/RouterOptions';
 
 import type { LocationHistory } from './LocationHistory';
-import PageManager from './PageManager';
 
 // TODO(FW-2959): types
 
@@ -27,13 +26,14 @@ interface NavManagerProps {
     options?: any,
     tab?: string
   ) => void;
+  onNavigateRoot: (pathname: string, animationBuilder?: AnimationBuilder) => void;
   onSetCurrentTab: (tab: string, routeInfo: RouteInfo) => void;
   onChangeTab: (tab: string, path: string, routeOptions?: any) => void;
   onResetTab: (tab: string, path: string, routeOptions?: any) => void;
-  ionRedirect: any;
   ionRoute: any;
   stackManager: any;
   locationHistory: LocationHistory;
+  children: React.ReactNode;
 }
 
 export class NavManager extends React.PureComponent<NavManagerProps, NavContextState> {
@@ -50,6 +50,9 @@ export class NavManager extends React.PureComponent<NavManagerProps, NavContextS
     back: (animationBuilder?: AnimationBuilder) => {
       this.goBack(undefined, animationBuilder);
     },
+    navigateRoot: (pathname: string, animationBuilder?: AnimationBuilder) => {
+      this.props.onNavigateRoot(pathname, animationBuilder);
+    },
     canGoBack: () => this.props.locationHistory.canGoBack(),
     nativeBack: () => this.props.onNativeBack(),
     routeInfo: this.props.routeInfo,
@@ -61,10 +64,8 @@ export class NavManager extends React.PureComponent<NavManagerProps, NavContextS
       goBack: this.goBack.bind(this),
       hasIonicRouter: () => true,
       navigate: this.navigate.bind(this),
-      getIonRedirect: this.getIonRedirect.bind(this),
       getIonRoute: this.getIonRoute.bind(this),
       getStackManager: this.getStackManager.bind(this),
-      getPageManager: this.getPageManager.bind(this),
       routeInfo: this.props.routeInfo,
       setCurrentTab: this.props.onSetCurrentTab,
       changeTab: this.props.onChangeTab,
@@ -111,14 +112,6 @@ export class NavManager extends React.PureComponent<NavManagerProps, NavContextS
     this.props.onNavigate(path, action, direction, animationBuilder, options, tab);
   }
 
-  getPageManager() {
-    return PageManager;
-  }
-
-  getIonRedirect() {
-    return this.props.ionRedirect;
-  }
-
   getIonRoute() {
     return this.props.ionRoute;
   }
@@ -127,12 +120,29 @@ export class NavManager extends React.PureComponent<NavManagerProps, NavContextS
     return this.props.stackManager;
   }
 
+  /**
+   * Cached on `routeInfo` because `state` never changes after the constructor.
+   * A new object on every render would re-render every consumer, including
+   * hidden pages.
+   */
+  private contextValues?: { navContext: NavContextState; ionRouterContext: IonRouterContextState };
+
+  private getContextValues() {
+    const { routeInfo } = this.props;
+    if (this.contextValues?.navContext.routeInfo !== routeInfo) {
+      this.contextValues = {
+        navContext: { ...this.state, routeInfo },
+        ionRouterContext: { ...this.ionRouterContextValue, routeInfo },
+      };
+    }
+    return this.contextValues;
+  }
+
   render() {
+    const { navContext, ionRouterContext } = this.getContextValues();
     return (
-      <NavContext.Provider value={{ ...this.state, routeInfo: this.props.routeInfo }}>
-        <IonRouterContext.Provider value={{ ...this.ionRouterContextValue, routeInfo: this.props.routeInfo }}>
-          {this.props.children}
-        </IonRouterContext.Provider>
+      <NavContext.Provider value={navContext}>
+        <IonRouterContext.Provider value={ionRouterContext}>{this.props.children}</IonRouterContext.Provider>
       </NavContext.Provider>
     );
   }

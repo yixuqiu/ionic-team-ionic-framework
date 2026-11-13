@@ -1,5 +1,5 @@
 import { Component } from "@angular/core";
-import { NavController } from "@ionic/angular";
+import { NavController } from "@ionic/angular/lazy";
 
 /**
  * This component is used in conjunction with a tabs router-outlet,
@@ -8,7 +8,8 @@ import { NavController } from "@ionic/angular";
  */
 @Component({
   selector: 'app-tabs-global',
-  templateUrl: 'tabs-global.component.html'
+  templateUrl: 'tabs-global.component.html',
+  standalone: false
 })
 export class TabsGlobalComponent {
 

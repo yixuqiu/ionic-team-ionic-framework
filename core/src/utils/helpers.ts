@@ -1,4 +1,7 @@
 import type { EventEmitter } from '@stencil/core';
+import { win } from '@utils/browser';
+import { printIonError } from '@utils/logging';
+import { isRTL } from '@utils/rtl';
 
 import type { Side } from '../components/menu/menu-interface';
 
@@ -42,7 +45,7 @@ const transitionEnd = (el: HTMLElement | null, expectedDuration = 0, callback: (
   if (el) {
     el.addEventListener('webkitTransitionEnd', onTransitionEnd, opts);
     el.addEventListener('transitionend', onTransitionEnd, opts);
-    animationTimeout = setTimeout(onTransitionEnd, expectedDuration + ANIMATION_FALLBACK_TIMEOUT);
+    animationTimeout = setTimeout(onTransitionEnd, expectedDuration + ANIMATION_FALLBACK_TIMEOUT) as unknown as number;
 
     unRegTrans = () => {
       if (animationTimeout !== undefined) {
@@ -96,8 +99,8 @@ export type Attributes = { [key: string]: any };
  * helper function should be called in componentWillLoad and assigned to a variable
  * that is later used in the render function.
  *
- * This does not need to be reactive as changing attributes on the host element
- * does not trigger a re-render.
+ * This copies once. Use `createAttributeController` instead when the attributes can
+ * change after load, since a host attribute change does not trigger a re-render.
  */
 export const inheritAttributes = (el: HTMLElement, attributes: string[] = []) => {
   const attributeObject: Attributes = {};
@@ -119,8 +122,10 @@ export const inheritAttributes = (el: HTMLElement, attributes: string[] = []) =>
  * List of available ARIA attributes + `role`.
  * Removed deprecated attributes.
  * https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Attributes
+ *
+ * @internal Exported for `attribute-controller.ts`, which needs the same set.
  */
-const ariaAttributes = [
+export const ariaAttributes = [
   'role',
   'aria-activedescendant',
   'aria-atomic',
@@ -190,37 +195,60 @@ export const inheritAriaAttributes = (el: HTMLElement, ignoreList?: string[]) =>
 };
 
 export const addEventListener = (el: any, eventName: string, callback: any, opts?: any) => {
-  if (typeof (window as any) !== 'undefined') {
-    const win = window as any;
-    const config = win?.Ionic?.config;
-    if (config) {
-      const ael = config.get('_ael');
-      if (ael) {
-        return ael(el, eventName, callback, opts);
-      } else if (config._ael) {
-        return config._ael(el, eventName, callback, opts);
-      }
-    }
-  }
-
   return el.addEventListener(eventName, callback, opts);
 };
 
 export const removeEventListener = (el: any, eventName: string, callback: any, opts?: any) => {
-  if (typeof (window as any) !== 'undefined') {
-    const win = window as any;
-    const config = win?.Ionic?.config;
-    if (config) {
-      const rel = config.get('_rel');
-      if (rel) {
-        return rel(el, eventName, callback, opts);
-      } else if (config._rel) {
-        return config._rel(el, eventName, callback, opts);
-      }
-    }
+  return el.removeEventListener(eventName, callback, opts);
+};
+
+/**
+ * Calls back when a CSS custom property that resolves to a length changes,
+ * which no event covers. The probe inherits the property from `hostEl` and
+ * uses it as its height, turning a property change into a size change that
+ * `ResizeObserver` can detect.
+ *
+ * The callback receives the probe's height. For length values, this matches
+ * the resolved property value. For other values, such as `fit-content`, the
+ * probe remains at zero, so the value only signals that the property changed.
+ * Percentages resolve against the probe's containing block, not the element
+ * where the property is ultimately used.
+ *
+ * Pass `initialValue` when the caller has already read the property so that
+ * changes occurring before the observer's first delivery are not missed.
+ * Without it, the first delivery establishes the baseline.
+ */
+export const onCustomPropertyChange = (
+  hostEl: HTMLElement | null | undefined,
+  property: string,
+  callback: (value: number) => void,
+  initialValue?: number
+): (() => void) => {
+  const doc = win?.document;
+  if (!doc || !hostEl || typeof ResizeObserver === 'undefined') {
+    return () => undefined;
   }
 
-  return el.removeEventListener(eventName, callback, opts);
+  const probe = doc.createElement('div');
+  probe.style.cssText = `position:fixed;visibility:hidden;pointer-events:none;top:0;left:0;width:0;height:var(${property},0px);`;
+  hostEl.appendChild(probe);
+
+  let lastHeight = initialValue;
+  const observer = new ResizeObserver((entries) => {
+    const { height } = entries[0].contentRect;
+
+    if (lastHeight !== undefined && height !== lastHeight) {
+      callback(height);
+    }
+
+    lastHeight = height;
+  });
+  observer.observe(probe);
+
+  return () => {
+    observer.disconnect();
+    probe.remove();
+  };
 };
 
 /**
@@ -313,7 +341,7 @@ export const clamp = (min: number, n: number, max: number) => {
 export const assert = (actual: any, reason: string) => {
   if (!actual) {
     const message = 'ASSERT: ' + reason;
-    console.error(message);
+    printIonError(message);
     debugger; // eslint-disable-line
     throw new Error(message);
   }
@@ -341,18 +369,21 @@ export const pointerCoord = (ev: any): { x: number; y: number } => {
 
 /**
  * @hidden
- * Given a side, return if it should be on the end
- * based on the value of dir
- * @param side the side
- * @param isRTL whether the application dir is rtl
+ * Given a side, returns whether it resolves to the end side for the current
+ * direction. In RTL `start` is the end side, and in LTR `end` is.
+ *
+ * @param side The current side before being redefined based on the direction.
+ * @param hostEl The component's host element. The direction is resolved from
+ * it or its nearest ancestor that declares one, falling back to the document.
  */
-export const isEndSide = (side: Side): boolean => {
-  const isRTL = document.dir === 'rtl';
+export const isEndSide = (side: Side, hostEl: HTMLElement): boolean => {
+  const rtl = isRTL(hostEl);
+
   switch (side) {
     case 'start':
-      return isRTL;
+      return rtl;
     case 'end':
-      return !isRTL;
+      return !rtl;
     default:
       throw new Error(`"${side}" is not a valid value for [side]. Use "start" or "end" instead.`);
   }
@@ -412,4 +443,11 @@ export const shallowEqualStringMap = (
   }
 
   return true;
+};
+
+/**
+ * Checks input for usable number. Not NaN and not Infinite.
+ */
+export const isSafeNumber = (input: unknown): input is number => {
+  return typeof input === 'number' && !isNaN(input) && isFinite(input);
 };

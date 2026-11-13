@@ -106,7 +106,18 @@
   flex: 1;
 
   width: 100%;
+
+  /**
+   * The input keeps a minimum width so that the value stays visible
+   * when a long label or wide slotted content would otherwise shrink
+   * it to nothing.
+   */
+  min-width: $form-control-min-width;
   max-width: 100%;
+
+  // Ensure the input fills the full height of the native wrapper.
+  // This prevents the wrapper from being the click event target.
+  height: 100%;
   max-height: 100%;
 
   border: 0;
@@ -161,9 +172,13 @@
 // otherwise the .input-cover will not be rendered at all
 // The input cover is not clickable when the input is disabled
 .cloned-input {
-  @include position(0, null, 0, 0);
-
   position: absolute;
+  top: 0;
+  bottom: 0;
+
+  // Reset height since absolute positioning with top/bottom handles sizing
+  height: auto;
+  max-height: none;
 
   pointer-events: none;
 }
@@ -181,7 +196,6 @@
 // --------------------------------------------------
 
 .input-clear-icon {
-  @include margin(auto);
   @include padding(0);
   @include background-position(center);
 
@@ -251,6 +265,25 @@
   line-height: normal;
 }
 
+// Input Control (Label + Input)
+// ----------------------------------------------------------------
+
+.input-control {
+  display: flex;
+
+  flex-grow: 1;
+
+  width: 100%;
+
+  /**
+  * Allows the control to shrink below the label and input's intrinsic
+  * width, preventing the start and end slots from being pushed outside
+  * the wrapper. The label and input truncate independently, so it can
+  * use whatever space remains after accounting for the slots.
+  */
+  min-width: 0;
+}
+
 // Input Native Wrapper
 // ----------------------------------------------------------------
 
@@ -261,10 +294,35 @@
 
   flex-grow: 1;
 
-  // ensure start/end slot content is vertically centered
-  align-items: center;
-
   width: 100%;
+}
+
+/**
+ * When the label sits beside the input, the label should size to its content
+ * and the input should take the remaining space. A zero flex basis prevents
+ * the input from requesting its full width and forcing the label to shrink.
+ * Stacked and floating placements use a column layout, so their flex basis
+ * controls height instead and does not need to be overridden.
+ */
+:host(.input-label-placement-start) .native-wrapper,
+:host(.input-label-placement-end) .native-wrapper,
+:host(.input-label-placement-fixed) .native-wrapper {
+  flex: 1 1 0;
+}
+
+// Input Start/End Containers
+// ----------------------------------------------------------------
+
+.input-start,
+.input-end {
+  display: flex;
+
+  position: relative;
+
+  flex-shrink: 0;
+
+  // Ensure start/end content is vertically centered
+  align-items: center;
 }
 
 // Input Highlight
@@ -306,6 +364,8 @@
   border-top: var(--border-width) var(--border-style) var(--border-color);
 
   font-size: dynamic-font(12px);
+
+  white-space: normal;
 }
 
 /**
@@ -340,7 +400,7 @@
 .input-bottom .helper-text {
   display: block;
 
-  color: #{$text-color-step-450};
+  color: $text-color-step-300;
 }
 
 :host(.ion-touched.ion-invalid) .input-bottom .error-text {
@@ -362,7 +422,7 @@
    */
   @include margin-horizontal(auto, null);
 
-  color: #{$text-color-step-450};
+  color: $text-color-step-300;
 
   white-space: nowrap;
 
@@ -390,6 +450,13 @@
   align-items: center;
 
   /**
+  * Allows the label to shrink below its intrinsic content width.
+  * Without this the label keeps its full width and can push the
+  * input and end slot outside the wrapper.
+  */
+  min-width: 0;
+
+  /**
    * Label text should not extend
    * beyond the bounds of the input.
    * However, we do not set the max
@@ -399,7 +466,11 @@
    */
   max-width: 200px;
 
-  transition: color 150ms cubic-bezier(.4, 0, .2, 1), transform 150ms cubic-bezier(.4, 0, .2, 1);
+  /**
+   * The max-width animates with the transform so the label does not
+   * reveal its full floating width while it is still at full size.
+   */
+  transition: color 150ms #{$form-control-label-transition-easing}, transform 150ms #{$form-control-label-transition-easing}, max-width 150ms #{$form-control-label-transition-easing};
 
   /**
    * This ensures that double tapping this text
@@ -407,6 +478,18 @@
    * when a screen reader is enabled.
    */
   pointer-events: none;
+}
+
+/**
+ * When start/end slots are added or removed, we temporarily
+ * disable the label transition to prevent the floating label
+ * from animating as its position is adjusted.
+ *
+ * This class is applied by the start and end container controller,
+ * so renaming it here requires renaming it there too.
+ */
+:host(.skip-label-transition) .label-text-wrapper {
+  transition: none;
 }
 
 /**
@@ -457,7 +540,7 @@
  * Label is on the left of the input in LTR and
  * on the right in RTL.
  */
-:host(.input-label-placement-start) .input-wrapper {
+:host(.input-label-placement-start) .input-control {
   flex-direction: row;
 }
 
@@ -477,7 +560,7 @@
  * Label is on the right of the input in LTR and
  * on the left in RTL.
  */
-:host(.input-label-placement-end) .input-wrapper {
+:host(.input-label-placement-end) .input-control {
   flex-direction: row-reverse;
 }
 
@@ -522,10 +605,9 @@
  * Floating: Label sits over the input when the input has no
  * value and is blurred. Label sits above the input and is scaled
  * down when the input is focused or has a value.
- *
  */
-:host(.input-label-placement-stacked) .input-wrapper,
-:host(.input-label-placement-floating) .input-wrapper {
+:host(.input-label-placement-stacked) .input-control,
+:host(.input-label-placement-floating) .input-control {
   flex-direction: column;
   align-items: start;
 }
@@ -547,15 +629,6 @@
    * autofill background too.
    */
   z-index: 2;
-}
-
-/**
- * Ensures the input does not
- * overlap the label.
- */
-:host(.input-label-placement-stacked) input,
-:host(.input-label-placement-floating) input {
-  @include margin(1px, 0, 0, 0);
 }
 
 /**
@@ -612,5 +685,5 @@
  */
 :host([disabled]) ::slotted(ion-input-password-toggle),
 :host([readonly]) ::slotted(ion-input-password-toggle) {
-  display: none;
+  visibility: hidden;
 }

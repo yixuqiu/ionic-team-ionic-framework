@@ -1,5 +1,6 @@
 import type { ComponentInterface, EventEmitter } from '@stencil/core';
-import { Component, Element, Event, Host, Listen, Prop, Watch, h } from '@stencil/core';
+import { Build, Component, Element, Event, Host, Listen, Method, Prop, State, Watch, h } from '@stencil/core';
+import { checkInvalidState } from '@utils/forms';
 import { renderHiddenInput } from '@utils/helpers';
 
 import { getIonMode } from '../../global/ionic-global';
@@ -8,13 +9,27 @@ import type { RadioGroupChangeEventDetail, RadioGroupCompareFn } from './radio-g
 
 @Component({
   tag: 'ion-radio-group',
+  styleUrls: {
+    ios: 'radio-group.ios.scss',
+    md: 'radio-group.md.scss',
+  },
 })
 export class RadioGroup implements ComponentInterface {
   private inputId = `ion-rg-${radioGroupIds++}`;
+  private helperTextId = `${this.inputId}-helper-text`;
+  private errorTextId = `${this.inputId}-error-text`;
   private labelId = `${this.inputId}-lbl`;
   private label?: HTMLIonLabelElement | null;
+  private validationObserver?: MutationObserver;
 
   @Element() el!: HTMLElement;
+
+  /**
+   * Track validation state for proper aria-live announcements.
+   */
+  @State() isInvalid = false;
+
+  @State() private hintTextId?: string;
 
   /**
    * If `true`, the radios can be deselected.
@@ -38,6 +53,16 @@ export class RadioGroup implements ComponentInterface {
    * the value of the radio group.
    */
   @Prop({ mutable: true }) value?: any | null;
+
+  /**
+   * The helper text to display at the top of the radio group.
+   */
+  @Prop() helperText?: string;
+
+  /**
+   * The error text to display at the top of the radio group.
+   */
+  @Prop() errorText?: string;
 
   @Watch('value')
   valueChanged(value: any | undefined) {
@@ -105,6 +130,57 @@ export class RadioGroup implements ComponentInterface {
         this.labelId = label.id = this.name + '-lbl';
       }
     }
+
+    // Watch for class changes to update validation state.
+    if (Build.isBrowser && typeof MutationObserver !== 'undefined') {
+      this.validationObserver = new MutationObserver(() => {
+        const newIsInvalid = checkInvalidState(this.el);
+        if (this.isInvalid !== newIsInvalid) {
+          this.isInvalid = newIsInvalid;
+          /**
+           * Screen readers tend to announce changes
+           * to `aria-describedby` when the attribute
+           * is changed during a blur event for a
+           * native form control.
+           * However, the announcement can be spotty
+           * when using a non-native form control
+           * and `forceUpdate()`.
+           * This is due to `forceUpdate()` internally
+           * rescheduling the DOM update to a lower
+           * priority queue regardless if it's called
+           * inside a Promise or not, thus causing
+           * the screen reader to potentially miss the
+           * change.
+           * By using a State variable inside a Promise,
+           * it guarantees a re-render immediately at
+           * a higher priority.
+           */
+          Promise.resolve().then(() => {
+            this.hintTextId = this.getHintTextId();
+          });
+        }
+      });
+
+      this.validationObserver.observe(this.el, {
+        attributes: true,
+        attributeFilter: ['class'],
+      });
+    }
+
+    // Always set initial state
+    this.isInvalid = checkInvalidState(this.el);
+  }
+
+  componentWillLoad() {
+    this.hintTextId = this.getHintTextId();
+  }
+
+  disconnectedCallback() {
+    // Clean up validation observer to prevent memory leaks.
+    if (this.validationObserver) {
+      this.validationObserver.disconnect();
+      this.validationObserver = undefined;
+    }
   }
 
   private getRadios(): HTMLIonRadioElement[] {
@@ -155,7 +231,9 @@ export class RadioGroup implements ComponentInterface {
 
   @Listen('keydown', { target: 'document' })
   onKeydown(ev: KeyboardEvent) {
-    const inSelectPopover = !!this.el.closest('ion-select-popover');
+    // We don't want the value to automatically change/emit when the radio group is part of a select interface
+    // as this will cause the interface to close when navigating through the radio group options
+    const inSelectInterface = !!this.el.closest('ion-select-popover') || !!this.el.closest('ion-select-modal');
 
     if (ev.target && !this.el.contains(ev.target as HTMLElement)) {
       return;
@@ -187,7 +265,7 @@ export class RadioGroup implements ComponentInterface {
       if (next && radios.includes(next)) {
         next.setFocus(ev);
 
-        if (!inSelectPopover) {
+        if (!inSelectInterface) {
           this.value = next.value;
           this.emitValueChange(ev);
         }
@@ -212,7 +290,64 @@ export class RadioGroup implements ComponentInterface {
         // to the bottom of the screen
         ev.preventDefault();
       }
+
+      // Inside a select interface, Enter commits the focused radio
+      // value (matching native <select>). The !ev.repeat guard stops
+      // a held Enter on the triggering ion-select from re-committing
+      // once focus lands in the opened popover/modal.
+      if (ev.key === 'Enter' && inSelectInterface && !ev.repeat) {
+        const previousValue = this.value;
+        this.value = current.value;
+        if (previousValue !== this.value) {
+          this.emitValueChange(ev);
+        }
+        ev.preventDefault();
+      }
     }
+  }
+
+  /** @internal */
+  @Method()
+  async setFocus() {
+    const radioToFocus = this.getRadios().find((r) => r.tabIndex !== -1);
+    radioToFocus?.setFocus();
+  }
+
+  /**
+   * Renders the helper text or error text values
+   */
+  private renderHintText() {
+    const { helperText, errorText, helperTextId, errorTextId, isInvalid } = this;
+
+    const hasHintText = !!helperText || !!errorText;
+    if (!hasHintText) {
+      return;
+    }
+
+    return (
+      <div class="radio-group-top">
+        <div id={helperTextId} class="helper-text" aria-live="polite">
+          {!isInvalid ? helperText : null}
+        </div>
+        <div id={errorTextId} class="error-text" role="alert">
+          {isInvalid ? errorText : null}
+        </div>
+      </div>
+    );
+  }
+
+  private getHintTextId(): string | undefined {
+    const { helperText, errorText, helperTextId, errorTextId, isInvalid } = this;
+
+    if (isInvalid && errorText) {
+      return errorTextId;
+    }
+
+    if (helperText) {
+      return helperTextId;
+    }
+
+    return undefined;
   }
 
   render() {
@@ -221,7 +356,19 @@ export class RadioGroup implements ComponentInterface {
 
     renderHiddenInput(true, el, name, value, false);
 
-    return <Host role="radiogroup" aria-labelledby={label ? labelId : null} onClick={this.onClick} class={mode}></Host>;
+    return (
+      <Host
+        role="radiogroup"
+        aria-labelledby={label ? labelId : null}
+        aria-describedby={this.hintTextId}
+        aria-invalid={this.isInvalid ? 'true' : undefined}
+        onClick={this.onClick}
+        class={mode}
+      >
+        {this.renderHintText()}
+        <slot></slot>
+      </Host>
+    );
   }
 }
 

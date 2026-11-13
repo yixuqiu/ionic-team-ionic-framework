@@ -9,6 +9,24 @@
   --padding-start: 16px;
   --padding-end: 16px;
 
+  /**
+   * The measured width of the start container, as a negative offset
+   * in LTR and a positive one in RTL. Written to the host by the start
+   * and end container controller, so renaming it here requires renaming
+   * it there too. Declared with a default so the label is positioned
+   * correctly before the first measurement runs.
+   */
+  --internal-start-container-adjustment: 0px;
+
+  /**
+   * The measured combined width of the start and end containers.
+   * Written to the host by the start and end container controller, so
+   * renaming it here requires renaming it there too. Declared with a
+   * default so the floating label falls back to the width of the
+   * control before the first measurement runs.
+   */
+  --internal-start-end-container-width: 0px;
+
   min-height: 56px;
 }
 
@@ -43,7 +61,7 @@
  * the select is focused.
  */
 :host(.select-fill-outline.select-expanded),
-:host(.select-fill-outline.ion-focused) {
+:host(.select-fill-outline.has-focus) {
   --border-width: var(--highlight-height);
   --border-color: var(--highlight-color);
 }
@@ -82,10 +100,10 @@
   position: absolute;
 
   /**
-   * Label text should not extend
-   * beyond the bounds of the select.
+   * This is the width of the select, which already
+   * excludes the start and end slots.
    */
-  max-width: calc(100% - var(--padding-start) - var(--padding-end));
+  max-width: 100%;
 }
 
 /**
@@ -100,17 +118,28 @@
 }
 
 /**
+ * The label is positioned relative to the control whether it is resting
+ * over the select or floating in the notch, so its max-width always resolves
+ * against the same width. This lets the max-width animate between the
+ * resting and floating values without jumping.
+ */
+:host(.select-fill-outline) .select-control {
+  position: relative;
+}
+
+/**
  * This makes the label sit above the select.
  */
 :host(.label-floating.select-fill-outline) .label-text-wrapper {
-  @include transform(translateY(-32%), scale(#{$form-control-label-stacked-scale}));
+  @include transform(translate(var(--internal-start-container-adjustment, 0px), -32%), scale(#{$form-control-label-stacked-scale}));
   @include margin(0);
 
   /**
-   * Label text should not extend
-   * beyond the bounds of the select.
+   * Label text should not extend beyond the bounds of the select.
+   * The control excludes the start and end slots, but the notch spans
+   * the full width of the outline, so their width is added back.
    */
-  max-width: calc((100% - var(--padding-start) - var(--padding-end) - #{$select-md-floating-label-padding * 2}) / #{$form-control-label-stacked-scale});
+  max-width: calc((100% + var(--internal-start-end-container-width) - #{$select-md-floating-label-padding * 2}) / #{$form-control-label-stacked-scale});
 }
 
 /**
@@ -197,13 +226,8 @@
 
 :host(.select-fill-outline) .select-outline-start {
   @include border(null, null, null, var(--border-width) var(--border-style) var(--border-color));
-}
-
-:host(.select-fill-outline) .select-outline-start {
   @include border-radius(var(--border-radius), 0px, 0px, var(--border-radius));
-}
 
-:host(.select-fill-outline) .select-outline-start {
   /**
    * There should be spacing between the translated text
    * and .select-outline-start. However, we can't add this
@@ -217,13 +241,8 @@
 
 :host(.select-fill-outline) .select-outline-end {
   @include border(null, var(--border-width) var(--border-style) var(--border-color), null, null);
-}
-
-:host(.select-fill-outline) .select-outline-end {
   @include border-radius(0px, var(--border-radius), var(--border-radius), 0px);
-}
 
-:host(.select-fill-outline) .select-outline-end {
   /**
    * The ending outline fragment
    * should take up the remaining free space.
@@ -239,4 +258,19 @@
  */
 :host(.label-floating.select-fill-outline) .select-outline-notch {
   border-top: none;
+}
+
+// Select Icon
+// ----------------------------------------------------------------
+
+/**
+ * When the select has an outline fill and
+ * in an item, then the icon should
+ * take on the highlight color.
+ */
+:host(.in-item.select-expanded.select-fill-outline) .select-wrapper .select-icon,
+:host(.in-item.has-focus.select-fill-outline) .select-wrapper .select-icon,
+:host(.in-item.has-focus.ion-valid.select-fill-outline) .select-wrapper .select-icon,
+:host(.in-item.ion-touched.ion-invalid.select-fill-outline) .select-wrapper .select-icon {
+  color: var(--highlight-color);
 }

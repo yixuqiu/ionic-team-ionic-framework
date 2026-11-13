@@ -49,7 +49,7 @@ export class PickerColumnOption implements ComponentInterface {
    * Default options are: `"primary"`, `"secondary"`, `"tertiary"`, `"success"`, `"warning"`, `"danger"`, `"light"`, `"medium"`, and `"dark"`.
    * For more information on colors, see [theming](/docs/theming/basics).
    */
-  @Prop({ reflect: true }) color?: Color = 'primary';
+  @Prop({ reflect: true }) color?: Color;
 
   /**
    * The aria-label of the option has changed after the
@@ -124,9 +124,9 @@ export class PickerColumnOption implements ComponentInterface {
           ['option-disabled']: disabled,
         })}
       >
-        <button tabindex="-1" aria-label={ariaLabel} disabled={disabled} onClick={() => this.onClick()}>
+        <div class={'picker-column-option-button'} role="button" aria-label={ariaLabel} onClick={() => this.onClick()}>
           <slot></slot>
-        </button>
+        </div>
       </Host>
     );
   }

@@ -53,11 +53,18 @@
 
 :host .calendar-action-buttons .calendar-month-year-toggle ion-icon,
 :host .calendar-action-buttons ion-buttons ion-button {
+  color: ion-color(primary, base);
+}
+
+:host(.ion-color) .calendar-action-buttons .calendar-month-year-toggle ion-icon,
+:host(.ion-color) .calendar-action-buttons ion-buttons ion-button {
   color: current-color(base);
 }
 
 :host .calendar-action-buttons ion-buttons {
-  @include padding($datetime-ios-padding * 0.5, 0, 0, 0);
+  align-items: stretch;
+
+  height: 100%;
 }
 
 :host .calendar-action-buttons ion-buttons ion-button {
@@ -233,9 +240,13 @@
 }
 
 .calendar-day.calendar-day-active {
-  background: current-color(base, 0.2);
+  background: ion-color(primary, base, 0.2);
 
   font-size: dynamic-font-max(22px, 1.6);
+}
+
+:host(.ion-color) .calendar-day.calendar-day-active {
+  background: current-color(base, 0.2);
 }
 
 /**
@@ -243,6 +254,10 @@
  * should have ion-color for text color.
  */
 :host .calendar-day.calendar-day-today {
+  color: ion-color(primary, base);
+}
+
+:host(.ion-color) .calendar-day.calendar-day-today {
   color: current-color(base);
 }
 
@@ -251,10 +266,16 @@
  * is selected should have ion-color for
  * text color and be bolder.
  */
-:host .calendar-day.calendar-day-active {
-  color: current-color(base);
+:host .calendar-day.calendar-day-active,
+:host .calendar-day.calendar-day-adjacent-day.calendar-day-active {
+  color: ion-color(primary, base);
 
   font-weight: 600;
+}
+
+:host(.ion-color) .calendar-day.calendar-day-active,
+:host(.ion-color) .calendar-day.calendar-day-adjacent-day.calendar-day-active {
+  color: current-color(base);
 }
 
 /**
@@ -263,8 +284,17 @@
  * with contrast text.
  */
 :host .calendar-day.calendar-day-today.calendar-day-active {
+  background: ion-color(primary, base);
+  color: ion-color(primary, contrast);
+}
+
+:host(.ion-color) .calendar-day.calendar-day-today.calendar-day-active {
   background: current-color(base);
   color: current-color(contrast);
+}
+
+:host .calendar-day.calendar-day-adjacent-day {
+  color: $text-color-step-700;
 }
 
 // Time / Header

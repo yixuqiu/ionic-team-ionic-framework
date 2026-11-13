@@ -14,12 +14,13 @@ import { getIonMode } from '../../global/ionic-global';
 })
 export class App implements ComponentInterface {
   private focusVisible?: FocusVisibleUtility;
+  private loadTimeout?: ReturnType<typeof setTimeout> | undefined;
 
   @Element() el!: HTMLElement;
 
   componentDidLoad() {
     if (Build.isBrowser) {
-      rIC(async () => {
+      this.rIC(async () => {
         const isHybrid = isPlatform(window, 'hybrid');
         if (!config.getBoolean('_testing')) {
           import('../../utils/tap-click').then((module) => module.startTapClick(config));
@@ -46,7 +47,7 @@ export class App implements ComponentInterface {
            */
           if (shouldUseCloseWatcher()) {
             printIonWarning(
-              'experimentalCloseWatcher was set to `true`, but hardwareBackButton was set to `false`. Both config options must be `true` for the Close Watcher API to be used.'
+              '[ion-app] - experimentalCloseWatcher was set to `true`, but hardwareBackButton was set to `false`. Both config options must be `true` for the Close Watcher API to be used.'
             );
           }
 
@@ -60,8 +61,13 @@ export class App implements ComponentInterface {
     }
   }
 
+  disconnectedCallback() {
+    if (this.loadTimeout) {
+      clearTimeout(this.loadTimeout);
+    }
+  }
+
   /**
-   * @internal
    * Used to set focus on an element that uses `ion-focusable`.
    * Do not use this if focusing the element as a result of a keyboard
    * event as the focus utility should handle this for us. This method
@@ -69,11 +75,21 @@ export class App implements ComponentInterface {
    * a result of another user action. (Ex: We focus the first element
    * inside of a popover when the user presents it, but the popover is not always
    * presented as a result of keyboard action.)
+   *
+   * @param elements An array of HTML elements to set focus on.
    */
   @Method()
   async setFocus(elements: HTMLElement[]) {
     if (this.focusVisible) {
       this.focusVisible.setFocus(elements);
+    }
+  }
+
+  private rIC(callback: () => void) {
+    if ('requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(callback);
+    } else {
+      this.loadTimeout = setTimeout(callback, 32);
     }
   }
 
@@ -111,12 +127,4 @@ const needInputShims = () => {
   }
 
   return false;
-};
-
-const rIC = (callback: () => void) => {
-  if ('requestIdleCallback' in window) {
-    (window as any).requestIdleCallback(callback);
-  } else {
-    setTimeout(callback, 32);
-  }
 };

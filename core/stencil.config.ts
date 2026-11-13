@@ -26,22 +26,18 @@ const getAngularOutputTargets = () => {
 
     // tabs
     'ion-tabs',
-    'ion-tab',
-
-    // auxiliar
-    'ion-picker-legacy-column',
   ]
   return [
     angularOutputTarget({
       componentCorePackage,
-      directivesProxyFile: '../packages/angular/src/directives/proxies.ts',
-      directivesArrayFile: '../packages/angular/src/directives/proxies-list.ts',
+      directivesProxyFile: '../packages/angular/src/lazy/directives/proxies.ts',
+      directivesArrayFile: '../packages/angular/src/lazy/directives/proxies-list.ts',
       excludeComponents,
       outputType: 'component',
     }),
     angularOutputTarget({
       componentCorePackage,
-      directivesProxyFile: '../packages/angular/standalone/src/directives/proxies.ts',
+      directivesProxyFile: '../packages/angular/src/standalone/directives/proxies.ts',
       excludeComponents: [
         ...excludeComponents,
         /**
@@ -55,6 +51,7 @@ const getAngularOutputTargets = () => {
          * Value Accessors are manually implemented in the `@ionic/angular/standalone` package.
          */
         'ion-input',
+        'ion-input-otp',
         'ion-textarea',
         'ion-searchbar',
         'ion-datetime',
@@ -67,6 +64,8 @@ const getAngularOutputTargets = () => {
 
       ],
       outputType: 'standalone',
+      // Emit each component in a separate file rather than putting them all in one large file.
+      esModules: true,
     })
   ];
 }
@@ -86,7 +85,7 @@ export const config: Config = {
     { components: ['ion-card', 'ion-card-content', 'ion-card-header', 'ion-card-title', 'ion-card-subtitle'] },
     { components: ['ion-checkbox'] },
     { components: ['ion-chip'] },
-    { components: ['ion-datetime', 'ion-picker-legacy', 'ion-picker-legacy-column'] },
+    { components: ['ion-datetime'] },
     { components: ['ion-fab', 'ion-fab-button', 'ion-fab-list'] },
     { components: ['ion-grid', 'ion-row', 'ion-col'] },
     { components: ['ion-infinite-scroll', 'ion-infinite-scroll-content'] },
@@ -125,11 +124,7 @@ export const config: Config = {
   ],
   outputTargets: [
     reactOutputTarget({
-      componentCorePackage,
-      includeImportCustomElements: true,
-      includePolyfills: false,
-      includeDefineCustomElements: false,
-      proxiesFile: '../packages/react/src/components/proxies.ts',
+      outDir: '../packages/react/src/components',
       excludeComponents: [
         // Routing
         'ion-router',
@@ -153,7 +148,6 @@ export const config: Config = {
         'ion-alert',
         'ion-loading',
         'ion-modal',
-        'ion-picker-legacy',
         'ion-popover',
         'ion-toast',
 
@@ -177,7 +171,6 @@ export const config: Config = {
         'ion-back-button',
         'ion-tab-button',
         'ion-tabs',
-        'ion-tab',
         'ion-tab-bar',
 
         // Overlays
@@ -185,7 +178,6 @@ export const config: Config = {
         'ion-alert',
         'ion-loading',
         'ion-modal',
-        'ion-picker-legacy',
         'ion-popover',
         'ion-toast',
 
@@ -196,28 +188,28 @@ export const config: Config = {
         {
           elements: ['ion-checkbox', 'ion-toggle'],
           targetAttr: 'checked',
-          event: 'ion-change'
+          event: 'ionChange'
         },
         {
           elements: ['ion-datetime', 'ion-radio-group', 'ion-radio', 'ion-segment', 'ion-segment-button', 'ion-select', 'ion-accordion-group'],
           targetAttr: 'value',
-          event: 'ion-change',
+          event: 'ionChange',
         },
         {
-          elements: ['ion-input', 'ion-searchbar', 'ion-textarea', 'ion-range'],
+          elements: ['ion-input', 'ion-input-otp', 'ion-searchbar', 'ion-textarea', 'ion-range'],
           targetAttr: 'value',
-          event: 'ion-input',
+          event: 'ionInput',
         }
       ],
     }),
     {
       type: 'docs-vscode',
       file: 'dist/html.html-data.json',
-      sourceCodeBaseUrl: 'https://github.com/ionic-team/ionic/tree/main/core/',
+      sourceCodeBaseUrl: 'https://github.com/ionic-team/ionic-framework/tree/main/core/',
     },
     {
       type: 'dist',
-      esmLoaderPath: '../loader'
+      esmLoaderPath: '../loader',
     },
     {
       type: 'dist-custom-elements',
@@ -227,7 +219,13 @@ export const config: Config = {
         dest: 'components',
         warn: true
       }],
-      includeGlobalScripts: false
+      includeGlobalScripts: false,
+      /**
+       * External Runtime uses default runtime settings instead of this file's definitions. Disabling it enables
+       * `experimentalSlotFixes` to be applied and prevents `@stencil/core/internal/client` from being imported, which
+       * contains a dynamic import that caused a warning in Angular.
+      */
+      externalRuntime: false,
     },
     {
       type: 'docs-json',
@@ -245,7 +243,6 @@ export const config: Config = {
     // },
     ...getAngularOutputTargets(),
   ],
-  buildEs5: 'prod',
   testing: {
     moduleNameMapper: {
       "@utils/test": ["<rootDir>/src/utils/test/utils"],
@@ -270,5 +267,11 @@ export const config: Config = {
      * the default behavior (slated for a future Stencil major version).
      */
     experimentalScopedSlotChanges: true,
+    /**
+     * Vite 8 / Rolldown honors the `@vite-ignore` comment on the lazy loader's dynamic import
+     * and never emits the `.entry.js` chunks, so requests for them 404. This flag prepends a
+     * switch of literal import paths those bundlers can resolve.
+     */
+    enableImportInjection: true,
   }
 };

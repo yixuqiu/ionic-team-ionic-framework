@@ -1,9 +1,12 @@
-import { Component, NgZone, OnDestroy, OnInit } from '@angular/core';
-import { IonRouterOutlet } from '@ionic/angular';
+import { Component, OnDestroy, OnInit } from '@angular/core';
+import { IonRouterOutlet } from '@ionic/angular/lazy';
+
+import { assertZoneContext } from '../../zone-assert.util';
 
 @Component({
-  selector: 'app-nested-outlet-page',
-  templateUrl: './nested-outlet-page.component.html',
+    selector: 'app-nested-outlet-page',
+    templateUrl: './nested-outlet-page.component.html',
+    standalone: false
 })
 export class NestedOutletPageComponent implements OnDestroy, OnInit {
   hasParentOutlet = false;
@@ -13,10 +16,10 @@ export class NestedOutletPageComponent implements OnDestroy, OnInit {
   }
 
   ngOnInit() {
-    NgZone.assertInAngularZone();
+    assertZoneContext();
   }
 
   ngOnDestroy() {
-    NgZone.assertInAngularZone();
+    assertZoneContext();
   }
 }

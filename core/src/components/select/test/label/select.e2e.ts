@@ -2,21 +2,44 @@ import { expect } from '@playwright/test';
 import { configs, test } from '@utils/test/playwright';
 
 /**
- * By default ion-select only takes up
- * as much space as it needs. Justification is
- * used for when the select takes up the full
- * line (such as in an ion-item). As a result,
- * we set the width of the select so we can
- * see the justification results.
+ * By default ion-select takes up the full width
+ * of its container. The justify property can be
+ * used to change the alignment of the select
+ * within the container.
  */
 configs().forEach(({ title, screenshot, config }) => {
   test.describe(title('select: label'), () => {
+    test.describe('select: default placement', () => {
+      test('should render a space between justification with a default select', async ({ page }) => {
+        await page.setContent(
+          `
+          <ion-select label="Label" placeholder="Select an Item"></ion-select>
+         `,
+          config
+        );
+
+        const select = page.locator('ion-select');
+        await expect(select).toHaveScreenshot(screenshot(`select-label-default`));
+      });
+
+      test('should truncate long labels with ellipses', async ({ page }) => {
+        await page.setContent(
+          `
+          <ion-select label="Long Label Long Label Long Label Long Label Long Label Long Label" placeholder="Select an Item"></ion-select>
+         `,
+          config
+        );
+
+        const select = page.locator('ion-select');
+        await expect(select).toHaveScreenshot(screenshot(`select-label-long-label`));
+      });
+    });
+
     test.describe('select: start placement', () => {
       test('should render a start justification with label in the start position', async ({ page }) => {
         await page.setContent(
           `
-
-           <ion-select label="Label" placeholder="Select an Item" label-placement="start" justify="start" style="width: 200px"></ion-select>
+           <ion-select label="Label" placeholder="Select an Item" label-placement="start" justify="start"></ion-select>
          `,
           config
         );
@@ -27,8 +50,7 @@ configs().forEach(({ title, screenshot, config }) => {
       test('should render an end justification with label in the start position', async ({ page }) => {
         await page.setContent(
           `
-
-           <ion-select label="Label" placeholder="Select an Item" label-placement="start" justify="end" style="width: 200px"></ion-select>
+           <ion-select label="Label" placeholder="Select an Item" label-placement="start" justify="end"></ion-select>
          `,
           config
         );
@@ -39,8 +61,7 @@ configs().forEach(({ title, screenshot, config }) => {
       test('should render a space between justification with label in the start position', async ({ page }) => {
         await page.setContent(
           `
-
-           <ion-select label="Label" placeholder="Select an Item" label-placement="start" justify="space-between" style="width: 200px"></ion-select>
+           <ion-select label="Label" placeholder="Select an Item" label-placement="start" justify="space-between"></ion-select>
          `,
           config
         );
@@ -48,14 +69,25 @@ configs().forEach(({ title, screenshot, config }) => {
         const select = page.locator('ion-select');
         await expect(select).toHaveScreenshot(screenshot(`select-label-start-justify-space-between`));
       });
+
+      test('should truncate long labels with ellipses', async ({ page }) => {
+        await page.setContent(
+          `
+          <ion-select label="Long Label Long Label Long Label Long Label Long Label Long Label" placeholder="Select an Item" label-placement="start" justify="start"></ion-select>
+         `,
+          config
+        );
+
+        const select = page.locator('ion-select');
+        await expect(select).toHaveScreenshot(screenshot(`select-label-start-justify-start-long-label`));
+      });
     });
 
     test.describe('select: end placement', () => {
       test('should render a start justification with label in the end position', async ({ page }) => {
         await page.setContent(
           `
-
-           <ion-select label="Label" placeholder="Select an Item" label-placement="end" justify="start" style="width: 200px"></ion-select>
+           <ion-select label="Label" placeholder="Select an Item" label-placement="end" justify="start"></ion-select>
          `,
           config
         );
@@ -66,8 +98,7 @@ configs().forEach(({ title, screenshot, config }) => {
       test('should render an end justification with label in the end position', async ({ page }) => {
         await page.setContent(
           `
-
-           <ion-select label="Label" placeholder="Select an Item" label-placement="end" justify="end" style="width: 200px"></ion-select>
+           <ion-select label="Label" placeholder="Select an Item" label-placement="end" justify="end"></ion-select>
          `,
           config
         );
@@ -78,8 +109,7 @@ configs().forEach(({ title, screenshot, config }) => {
       test('should render a space between justification with label in the end position', async ({ page }) => {
         await page.setContent(
           `
-
-           <ion-select label="Label" placeholder="Select an Item" label-placement="end" justify="space-between" style="width: 200px"></ion-select>
+           <ion-select label="Label" placeholder="Select an Item" label-placement="end" justify="space-between"></ion-select>
          `,
           config
         );
@@ -93,8 +123,7 @@ configs().forEach(({ title, screenshot, config }) => {
       test('should render a start justification with label in the fixed position', async ({ page }) => {
         await page.setContent(
           `
-
-           <ion-select label="Label" placeholder="Select an Item" label-placement="fixed" justify="start" style="width: 200px"></ion-select>
+           <ion-select label="Label" placeholder="Select an Item" label-placement="fixed" justify="start"></ion-select>
          `,
           config
         );
@@ -105,8 +134,7 @@ configs().forEach(({ title, screenshot, config }) => {
       test('should render an end justification with label in the fixed position', async ({ page }) => {
         await page.setContent(
           `
-
-           <ion-select label="Label" placeholder="Select an Item" label-placement="fixed" justify="end" style="width: 200px"></ion-select>
+           <ion-select label="Label" placeholder="Select an Item" label-placement="fixed" justify="end"></ion-select>
          `,
           config
         );
@@ -117,8 +145,7 @@ configs().forEach(({ title, screenshot, config }) => {
       test('should render a space between justification with label in the fixed position', async ({ page }) => {
         await page.setContent(
           `
-
-           <ion-select label="Label" placeholder="Select an Item" label-placement="fixed" justify="space-between" style="width: 200px"></ion-select>
+           <ion-select label="Label" placeholder="Select an Item" label-placement="fixed" justify="space-between"></ion-select>
          `,
           config
         );
@@ -283,6 +310,65 @@ configs({ modes: ['md'], directions: ['ltr'] }).forEach(({ title, screenshot, co
       const select = page.locator('ion-select');
       await expect(select).toHaveScreenshot(screenshot(`select-label-slot-truncate`));
     });
+
+    /**
+     * The floating label must be positioned relative to `.select-wrapper` so its
+     * width is not constrained when the select width collapses. These tests
+     * cover both cases: a long label should retain the same available width
+     * despite wide start content, and a short label should not collapse when
+     * the start content takes up most of the select's width.
+     */
+    test('start slot content should not shrink the label', async ({ page }) => {
+      await page.setContent(
+        `
+        <div style="width: 200px">
+          <ion-select id="plain" fill="outline" label-placement="floating" value="1" label="Email Email Email Email Email Email">
+            <ion-select-option value="1">One</ion-select-option>
+          </ion-select>
+          <ion-select id="wide-start" fill="outline" label-placement="floating" value="1" label="Email Email Email Email Email Email">
+            <div slot="start" style="width: 120px; height: 24px"></div>
+            <ion-select-option value="1">One</ion-select-option>
+          </ion-select>
+        </div>
+      `,
+        config
+      );
+
+      const labelWidth = (id: string) =>
+        page.locator(`${id} .label-text`).evaluate((el: HTMLElement) => ({
+          available: el.clientWidth,
+          wanted: el.scrollWidth,
+        }));
+
+      const plain = await labelWidth('#plain');
+      const wideStart = await labelWidth('#wide-start');
+
+      // The label is long enough that it has to truncate in both cases
+      expect(plain.wanted).toBeGreaterThan(plain.available);
+
+      expect(wideStart.available).toBe(plain.available);
+    });
+
+    test('start slot content should not collapse a short label', async ({ page }) => {
+      await page.setContent(
+        `
+        <div style="width: 200px">
+          <ion-select fill="outline" label-placement="floating" value="1" label="Email">
+            <div slot="start" style="width: 170px; height: 24px"></div>
+            <ion-select-option value="1">One</ion-select-option>
+          </ion-select>
+        </div>
+      `,
+        config
+      );
+
+      const label = await page.locator('.label-text').evaluate((el: HTMLElement) => ({
+        available: el.clientWidth,
+        wanted: el.scrollWidth,
+      }));
+
+      expect(label.available).toBe(label.wanted);
+    });
   });
 });
 configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => {
@@ -347,6 +433,30 @@ configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => 
       await ionAlertDidPresent.next();
 
       await expect(alert.locator('.alert-title')).toHaveText('My Prop Alert');
+    });
+  });
+});
+
+/**
+ * This behavior does not vary across modes/directions
+ */
+configs({ modes: ['md'], directions: ['ltr'] }).forEach(({ title, screenshot, config }) => {
+  test.describe(title('select: floating label focus'), () => {
+    test('label should appear on top of the select when it is focused, has a placeholder, and no value', async ({
+      page,
+    }) => {
+      await page.setContent(
+        `
+           <ion-select label="Label" label-placement="floating" placeholder="Placeholder">
+             <ion-select-option value="apples">Apples</ion-select-option>
+           </ion-select>
+         `,
+        config
+      );
+
+      const select = page.locator('ion-select');
+      await page.locator('ion-select button').focus();
+      await expect(select).toHaveScreenshot(screenshot(`select-label-floating-focus-no-value-placeholder`));
     });
   });
 });

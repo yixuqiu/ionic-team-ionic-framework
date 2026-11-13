@@ -2,6 +2,7 @@ import type { SpinnerTypes } from '../components/spinner/spinner-configs';
 import type { TabButtonLayout } from '../components/tab-bar/tab-bar-interface';
 import type { AnimationBuilder, Mode } from '../interface';
 
+import type { LogLevel } from './logging';
 import type { PlatformConfig } from './platform';
 
 export interface IonicConfig {
@@ -145,11 +146,6 @@ export interface IonicConfig {
   toastEnter?: AnimationBuilder;
 
   /**
-   * Provides a custom enter animation for all `ion-picker-legacy`, overriding the default "animation".
-   */
-  pickerEnter?: AnimationBuilder;
-
-  /**
    * Provides a custom leave animation for all `ion-action-sheet`, overriding the default "animation".
    */
   actionSheetLeave?: AnimationBuilder;
@@ -178,11 +174,6 @@ export interface IonicConfig {
    * Provides a custom leave animation for all `ion-toast`, overriding the default "animation".
    */
   toastLeave?: AnimationBuilder;
-
-  /**
-   * Provides a custom leave animation for all `ion-picker-legacy`, overriding the default "animation".
-   */
-  pickerLeave?: AnimationBuilder;
 
   /**
    * If `true`, Ionic will enable a basic DOM sanitizer on component properties that accept custom HTML.
@@ -215,10 +206,23 @@ export interface IonicConfig {
   /**
    * @experimental
    * If `true`, the [CloseWatcher API](https://github.com/WICG/close-watcher) will be used to handle
-   * all Escape key and hardware back button presses to dismiss menus and overlays and to navigate.
+   * Escape key and Android back button presses that dismiss menus and overlays. It's only active
+   * while a menu or an overlay other than a toast is open, so back navigation works as usual
+   * otherwise. Hybrid apps still handle the hardware back button through the native `backbutton`
+   * event.
    * Note that the `hardwareBackButton` config option must also be `true`.
    */
   experimentalCloseWatcher?: boolean;
+
+  /**
+   * Configures the logging level for Ionic Framework:
+   *
+   * - `'OFF'`: No errors or warnings are logged.
+   * - `'ERROR'`: Logs only errors.
+   * - `'WARN'`: Logs errors and warnings.
+   * - `'DEBUG'`: Logs errors, warnings, and Ionic's internal diagnostics.
+   */
+  logLevel?: LogLevel;
 
   // PRIVATE configs
   keyboardHeight?: number;
@@ -234,9 +238,6 @@ export interface IonicConfig {
   _forceStatusbarPadding?: boolean;
   _testing?: boolean;
   _zoneGate?: (h: () => any) => any;
-  _ael?: (el: any, name: string, cb: any, opts: any) => any;
-  _rel?: (el: any, name: string, cb: any, opts: any) => any;
-  _ce?: (eventName: string, opts: any) => any;
 }
 
 type FocusManagerPriority = 'content' | 'heading' | 'banner';
@@ -244,7 +245,7 @@ type FocusManagerPriority = 'content' | 'heading' | 'banner';
 export const setupConfig = (config: IonicConfig) => {
   const win = window as any;
   const Ionic = win.Ionic;
-  // eslint-disable-next-line @typescript-eslint/prefer-optional-chain
+
   if (Ionic && Ionic.config && Ionic.config.constructor.name !== 'Object') {
     return;
   }

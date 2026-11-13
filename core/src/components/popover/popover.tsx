@@ -7,14 +7,17 @@ import { createLockController } from '@utils/lock-controller';
 import { printIonWarning } from '@utils/logging';
 import {
   BACKDROP,
+  cleanupRootFocusTrapAccessibility,
   dismiss,
   eventMethod,
+  FOCUS_TRAP_DISABLE_CLASS,
   prepareOverlay,
   present,
+  restoreRootFocusTrapAccessibility,
   setOverlayId,
-  FOCUS_TRAP_DISABLE_CLASS,
 } from '@utils/overlays';
 import { isPlatform } from '@utils/platform';
+import { isRTL } from '@utils/rtl';
 import { getClassMap } from '@utils/theme';
 import { deepReady, waitForMount } from '@utils/transition';
 
@@ -64,11 +67,13 @@ export class Popover implements ComponentInterface, PopoverInterface {
   private destroyTriggerInteraction?: () => void;
   private destroyKeyboardInteraction?: () => void;
   private destroyDismissInteraction?: () => void;
+  private headerResizeObserver?: ResizeObserver;
 
   private inline = false;
   private workingDelegate?: FrameworkDelegate;
 
   private focusDescendantOnPresent = false;
+  private dirSetOnPresent = false;
 
   lastFocus?: HTMLElement;
 
@@ -353,6 +358,14 @@ export class Popover implements ComponentInterface, PopoverInterface {
 
     prepareOverlay(el);
     configureTriggerInteraction();
+
+    // Re-apply the root lock if moved without dismiss() being called
+    if (this.presented) {
+      restoreRootFocusTrapAccessibility(el);
+      // The disconnect tore down the header observer, and `present()` is its
+      // only other caller, so a move mid-layout would lose the recalculation.
+      this.recalculateContentOnHeaderReady();
+    }
   }
 
   disconnectedCallback() {
@@ -361,11 +374,21 @@ export class Popover implements ComponentInterface, PopoverInterface {
     if (destroyTriggerInteraction) {
       destroyTriggerInteraction();
     }
+
+    if (this.headerResizeObserver) {
+      this.headerResizeObserver.disconnect();
+      this.headerResizeObserver = undefined;
+    }
+
+    // Clean up aria-hidden if removed without dismiss() being called
+    if (this.presented) {
+      cleanupRootFocusTrapAccessibility();
+    }
   }
 
   componentWillLoad() {
     const { el } = this;
-    const popoverId = setOverlayId(el);
+    const popoverId = this.htmlAttributes?.id ?? setOverlayId(el);
 
     this.parentPopover = el.closest(`ion-popover:not(#${popoverId})`) as HTMLIonPopoverElement | null;
 
@@ -459,6 +482,8 @@ export class Popover implements ComponentInterface, PopoverInterface {
    * Developers can pass a mouse, touch, or pointer event
    * to position the popover relative to where that event
    * was dispatched.
+   *
+   * @param event The event to position the popover relative to.
    */
   @Method()
   async present(event?: MouseEvent | TouchEvent | PointerEvent | CustomEvent): Promise<void> {
@@ -472,6 +497,16 @@ export class Popover implements ComponentInterface, PopoverInterface {
     const { el } = this;
 
     const { inline, delegate } = this.getDelegate(true);
+
+    /**
+     * When presented, ion-popover is hoisted from its place in the element
+     * hierarchy. Copy the current direction onto this element so that child
+     * elements can match.
+     */
+    if (!el.hasAttribute('dir')) {
+      el.setAttribute('dir', isRTL(el) ? 'rtl' : 'ltr');
+      this.dirSetOnPresent = true;
+    }
 
     /**
      * Emit ionMount so JS Frameworks have an opportunity
@@ -488,6 +523,8 @@ export class Popover implements ComponentInterface, PopoverInterface {
       this.componentProps,
       inline
     );
+
+    this.recalculateContentOnHeaderReady();
 
     if (!this.keyboardEvents) {
       this.configureKeyboardInteraction();
@@ -539,16 +576,55 @@ export class Popover implements ComponentInterface, PopoverInterface {
   }
 
   /**
+   * Watch the header for height changes and trigger content dimension
+   * recalculation when the header has a height > 0. This sets the offset-top
+   * of the content to the height of the header correctly.
+   */
+  private recalculateContentOnHeaderReady() {
+    const popoverContent = this.el.shadowRoot?.querySelector('.popover-content');
+    if (!popoverContent) {
+      return;
+    }
+
+    const contentContainer = this.usersElement || popoverContent;
+
+    const header = contentContainer.querySelector('ion-header') as HTMLElement | null;
+    const contentElements = contentContainer.querySelectorAll('ion-content');
+
+    if (!header || contentElements.length === 0) {
+      return;
+    }
+
+    // Both `present()` and a reconnect call this, so drop any existing
+    // observer. Below the guards, so a call that bails cannot leave none.
+    if (this.headerResizeObserver) {
+      this.headerResizeObserver.disconnect();
+      this.headerResizeObserver = undefined;
+    }
+
+    this.headerResizeObserver = new ResizeObserver(async () => {
+      if (header.offsetHeight > 0) {
+        this.headerResizeObserver?.disconnect();
+        this.headerResizeObserver = undefined;
+        for (const contentEl of contentElements) {
+          await contentEl.recalculateDimensions();
+        }
+      }
+    });
+
+    this.headerResizeObserver.observe(header);
+  }
+
+  /**
    * Dismiss the popover overlay after it has been presented.
-   *
-   * @param data Any data to emit in the dismiss events.
-   * @param role The role of the element that is dismissing the popover. For example, 'cancel' or 'backdrop'.
-   * @param dismissParentPopover If `true`, dismissing this popover will also dismiss
-   * a parent popover if this popover is nested. Defaults to `true`.
-   *
    * This is a no-op if the overlay has not been presented yet. If you want
    * to remove an overlay from the DOM that was never presented, use the
    * [remove](https://developer.mozilla.org/en-US/docs/Web/API/Element/remove) method.
+   *
+   * @param data Any data to emit in the dismiss events.
+   * @param role The role of the element that is dismissing the popover. For example, `cancel` or `backdrop`.
+   * @param dismissParentPopover If `true`, dismissing this popover will also dismiss
+   * a parent popover if this popover is nested. Defaults to `true`.
    */
   @Method()
   async dismiss(data?: any, role?: string, dismissParentPopover = true): Promise<boolean> {
@@ -586,6 +662,11 @@ export class Popover implements ComponentInterface, PopoverInterface {
        */
       const { delegate } = this.getDelegate();
       await detachComponent(delegate, this.usersElement);
+
+      if (this.dirSetOnPresent) {
+        this.el.removeAttribute('dir');
+        this.dirSetOnPresent = false;
+      }
     }
 
     unlock();
@@ -648,7 +729,7 @@ export class Popover implements ComponentInterface, PopoverInterface {
     const triggerEl = (this.triggerEl = trigger !== undefined ? document.getElementById(trigger) : null);
     if (!triggerEl) {
       printIonWarning(
-        `A trigger element with the ID "${trigger}" was not found in the DOM. The trigger element must be in the DOM when the "trigger" property is set on ion-popover.`,
+        `[ion-popover] - A trigger element with the ID "${trigger}" was not found in the DOM. The trigger element must be in the DOM when the "trigger" property is set on ion-popover.`,
         this.el
       );
       return;

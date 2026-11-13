@@ -1,9 +1,19 @@
 import { Component } from '@angular/core';
-import { UntypedFormGroup, UntypedFormBuilder, Validators, UntypedFormControl } from '@angular/forms';
+import { UntypedFormGroup, UntypedFormBuilder, Validators, UntypedFormControl, AbstractControl, ValidationErrors } from '@angular/forms';
 
+function otpRequiredLength(length: number) {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (!value || value.toString().length !== length) {
+      return { otpLength: true };
+    }
+    return null;
+  };
+}
 @Component({
-  selector: 'app-form',
-  templateUrl: './form.component.html',
+    selector: 'app-form',
+    templateUrl: './form.component.html',
+    standalone: false
 })
 export class FormComponent {
 
@@ -18,6 +28,9 @@ export class FormComponent {
       toggle: [false],
       input: ['', Validators.required],
       input2: ['Default Value'],
+      inputOtp: [null, [Validators.required, otpRequiredLength(4)]],
+      inputOtpText: ['', [Validators.required, otpRequiredLength(4)]],
+      inputOtp2: [1234],
       inputMin: [1, Validators.min(1)],
       inputMax: [1, Validators.max(1)],
       checkbox: [false],
@@ -34,6 +47,13 @@ export class FormComponent {
     }
   }
 
+  setOtpTouched() {
+    const formControl = this.profileForm.get('inputOtp');
+    if (formControl) {
+      formControl.markAsTouched();
+    }
+  }
+
   onSubmit() {
     this.submitted = 'true';
   }
@@ -45,6 +65,9 @@ export class FormComponent {
       toggle: true,
       input: 'Some value',
       input2: 'Another values',
+      inputOtp: 5678,
+      inputOtpText: 'ABCD',
+      inputOtp2: 1234,
       checkbox: true,
       radio: 'nes'
     });

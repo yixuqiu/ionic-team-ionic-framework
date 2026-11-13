@@ -1,10 +1,12 @@
 import { Component, NgZone } from '@angular/core';
-import { AlertController } from '@ionic/angular';
-import { NavComponent } from '../nav/nav.component';
+import { AlertController } from '@ionic/angular/lazy';
+
+import { assertZoneContext } from '../../zone-assert.util';
 
 @Component({
   selector: 'app-alert',
   templateUrl: './alert.component.html',
+  standalone: false
 })
 export class AlertComponent {
 
@@ -29,7 +31,7 @@ export class AlertComponent {
           text: 'Cancel',
           handler: () => {
             console.log(NgZone.isInAngularZone());
-            NgZone.assertInAngularZone();
+            assertZoneContext();
           }
         }
       ]

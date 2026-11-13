@@ -20,7 +20,7 @@ const checkedOptions: SelectPopoverOption[] = [
 configs({ modes: ['md'], directions: ['ltr'] }).forEach(({ title, config }) => {
   test.describe(title('select-popover: basic'), () => {
     test.beforeEach(({ browserName }) => {
-      test.skip(browserName === 'webkit', 'https://ionic-cloud.atlassian.net/browse/FW-2979');
+      test.skip(browserName === 'webkit', 'ROU-5437');
     });
 
     test.describe('single selection', () => {
@@ -55,11 +55,40 @@ configs({ modes: ['md'], directions: ['ltr'] }).forEach(({ title, config }) => {
       });
 
       test('pressing Space on a selected option should dismiss the popover', async ({ browserName }) => {
-        test.skip(browserName === 'firefox', 'Same behavior as https://ionic-cloud.atlassian.net/browse/FW-2979');
+        test.skip(browserName === 'firefox', 'Same behavior as ROU-5437');
 
         await selectPopoverPage.setup(config, checkedOptions, false);
 
         await selectPopoverPage.pressSpaceOnOption('apple');
+        await selectPopoverPage.ionPopoverDidDismiss.next();
+        await expect(selectPopoverPage.popover).not.toBeVisible();
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      test('pressing Enter on an unselected option should dismiss the popover', async ({ page: _page }, testInfo) => {
+        testInfo.annotations.push({
+          type: 'issue',
+          description: 'https://github.com/ionic-team/ionic-framework/issues/30561',
+        });
+
+        await selectPopoverPage.setup(config, options, false);
+
+        await selectPopoverPage.pressEnterOnOption('apple');
+        await selectPopoverPage.ionPopoverDidDismiss.next();
+        await expect(selectPopoverPage.popover).not.toBeVisible();
+      });
+
+      test('pressing Enter on a selected option should dismiss the popover', async ({ browserName }, testInfo) => {
+        testInfo.annotations.push({
+          type: 'issue',
+          description: 'https://github.com/ionic-team/ionic-framework/issues/30561',
+        });
+
+        test.skip(browserName === 'firefox', 'Same behavior as ROU-5437');
+
+        await selectPopoverPage.setup(config, checkedOptions, false);
+
+        await selectPopoverPage.pressEnterOnOption('apple');
         await selectPopoverPage.ionPopoverDidDismiss.next();
         await expect(selectPopoverPage.popover).not.toBeVisible();
       });

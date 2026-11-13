@@ -50,12 +50,28 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('@/views/DefaultHref.vue')
   },
   {
+    path: '/direction-none-back/a',
+    component: () => import('@/views/DirectionNoneBackA.vue')
+  },
+  {
+    path: '/direction-none-back/b',
+    component: () => import('@/views/DirectionNoneBackB.vue')
+  },
+  {
+    path: '/direction-none-back/fallback',
+    component: () => import('@/views/DirectionNoneBackFallback.vue')
+  },
+  {
     path: '/routing',
     component: () => import('@/views/Routing.vue')
   },
   {
     path: '/routing/child',
     component: () => import('@/views/RoutingChild.vue')
+  },
+  {
+    path: '/routing/guards',
+    component: () => import('@/views/RoutingGuards.vue')
   },
   {
     path: '/routing/:id',
@@ -71,10 +87,6 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('@/views/Navigation.vue')
   },
   {
-    path: '/components',
-    component: () => import('@/views/Components.vue'),
-  },
-  {
     path: '/components/breadcrumbs',
     component: () => import('@/views/Breadcrumbs.vue')
   },
@@ -87,27 +99,45 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import('@/views/Range.vue')
   },
   {
-    path: '/nested',
-    component: () => import('@/views/RouterOutlet.vue'),
+    path: '/reorder-group',
+    component: () => import('@/views/ReorderGroup.vue')
+  },
+  {
+    path: '/swipe-gesture-disabled',
+    component: () => import('@/views/swipe-gesture-disabled/SwipeGestureDisabledOutlet.vue'),
     children: [
       {
         path: '',
-        component: () => import('@/views/NestedChild.vue')
+        component: () => import('@/views/swipe-gesture-disabled/SwipeGestureDisabledMain.vue')
+      },
+      {
+        path: 'details',
+        component: () => import('@/views/swipe-gesture-disabled/SwipeGestureDisabledDetails.vue')
+      }
+    ]
+  },
+  {
+    path: '/nested',
+    component: () => import('@/views/nested/RouterOutlet.vue'),
+    children: [
+      {
+        path: '',
+        component: () => import('@/views/nested/NestedChild.vue')
       },
       {
         path: 'two',
-        component: () => import('@/views/NestedChildTwo.vue')
+        component: () => import('@/views/nested/NestedChildTwo.vue')
       },
       {
         path: ':id',
-        component: () => import('@/views/Folder.vue'),
+        component: () => import('@/views/nested/Folder.vue'),
         props: true
       }
     ]
   },
   {
     path: '/tabs/',
-    component: () => import('@/views/Tabs.vue'),
+    component: () => import('@/views/tabs/Tabs.vue'),
     children: [
       {
         path: '',
@@ -115,33 +145,38 @@ const routes: Array<RouteRecordRaw> = [
       },
       {
         path: 'tab1',
-        component: () => import('@/views/Tab1.vue'),
+        component: () => import('@/views/tabs/Tab1.vue'),
       },
       {
         path: 'tab1/:id',
-        component: () => import('@/views/Tab1Parameter.vue'),
+        component: () => import('@/views/tabs/Tab1Parameter.vue'),
         props: true
       },
       {
         path: 'tab2',
-        component: () => import('@/views/Tab2.vue')
+        component: () => import('@/views/tabs/Tab2.vue')
+      },
+      {
+        path: 'tab2/:id',
+        component: () => import('@/views/tabs/Tab2Parameter.vue'),
+        props: true
       },
       {
         path: 'tab3',
         beforeEnter: (to, from, next) => {
           next({ path: '/tabs/tab1' });
         },
-        component: () => import('@/views/Tab3.vue')
+        component: () => import('@/views/tabs/Tab3.vue')
       },
       {
         path: 'tab4',
-        component: () => import('@/views/Tab4.vue')
+        component: () => import('@/views/tabs/Tab4.vue')
       }
     ]
   },
   {
     path: '/tabs-secondary/',
-    component: () => import('@/views/TabsSecondary.vue'),
+    component: () => import('@/views/tabs-secondary/TabsSecondary.vue'),
     children: [
       {
         path: '',
@@ -149,15 +184,103 @@ const routes: Array<RouteRecordRaw> = [
       },
       {
         path: 'tab1',
-        component: () => import('@/views/Tab1Secondary.vue')
+        component: () => import('@/views/tabs-secondary/Tab1Secondary.vue')
       },
       {
         path: 'tab2',
-        component: () => import('@/views/Tab2Secondary.vue')
+        component: () => import('@/views/tabs-secondary/Tab2Secondary.vue')
       },
       {
         path: 'tab3',
-        component: () => import('@/views/Tab3Secondary.vue')
+        component: () => import('@/views/tabs-secondary/Tab3Secondary.vue')
+      }
+    ]
+  },
+  {
+    path: '/tabs-basic',
+    component: () => import('@/views/TabsBasic.vue')
+  },
+  {
+    path: '/tabs-standalone',
+    component: () => import('@/views/TabsStandalone.vue')
+  },
+  {
+    path: '/tabs-search-params/',
+    component: () => import('@/views/tabs-search-params/TabsSearchParams.vue'),
+    children: [
+      {
+        path: '',
+        redirect: '/tabs-search-params/tab1?foo=bar'
+      },
+      {
+        path: 'tab1',
+        component: () => import('@/views/tabs-search-params/Tab1.vue')
+      },
+      {
+        path: 'tab2',
+        component: () => import('@/views/tabs-search-params/Tab2.vue')
+      },
+      {
+        path: 'tab3',
+        component: () => import('@/views/tabs-search-params/Tab3.vue')
+      },
+      {
+        path: 'tab4',
+        component: () => import('@/views/tabs-search-params/Tab4.vue')
+      }
+    ]
+  },
+  {
+    path: '/tab-lifecycle/',
+    component: () => import('@/views/tab-lifecycle/TabLifecycle.vue'),
+    children: [
+      {
+        path: '',
+        redirect: '/tab-lifecycle/home'
+      },
+      {
+        path: 'home',
+        component: () => import('@/views/tab-lifecycle/TabLifecycleHome.vue')
+      },
+      {
+        path: 'settings',
+        component: () => import('@/views/tab-lifecycle/TabLifecycleSettings.vue')
+      },
+      {
+        path: 'nested',
+        component: () => import('@/views/tab-lifecycle/TabLifecycleNested.vue'),
+        children: [
+          {
+            path: '',
+            component: () => import('@/views/tab-lifecycle/TabLifecycleInner.vue')
+          }
+        ]
+      }
+    ]
+  },
+  {
+    path: '/tab-lifecycle-outside',
+    component: () => import('@/views/tab-lifecycle/TabLifecycleOutside.vue')
+  },
+  {
+    path: '/tabs-similar-prefixes/',
+    component: () => import('@/views/tabs-similar-prefixes/TabsSimilarPrefixes.vue'),
+    children: [
+      {
+        path: '',
+        redirect: '/tabs-similar-prefixes/home'
+      },
+      {
+        path: 'home',
+        component: () => import('@/views/tabs-similar-prefixes/Home.vue'),
+      },
+      {
+        path: 'home2',
+        component: () => import('@/views/tabs-similar-prefixes/Home2.vue'),
+      },
+      {
+        path: 'home3',
+        component: () => import('@/views/tabs-similar-prefixes/Home3.vue'),
       }
     ]
   },

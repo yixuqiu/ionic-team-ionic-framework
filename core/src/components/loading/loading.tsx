@@ -5,12 +5,14 @@ import { raf } from '@utils/helpers';
 import { createLockController } from '@utils/lock-controller';
 import {
   BACKDROP,
+  cleanupRootFocusTrapAccessibility,
+  createDelegateController,
+  createTriggerController,
   dismiss,
   eventMethod,
   prepareOverlay,
   present,
-  createDelegateController,
-  createTriggerController,
+  restoreRootFocusTrapAccessibility,
   setOverlayId,
 } from '@utils/overlays';
 import { sanitizeDOMString } from '@utils/sanitization';
@@ -207,6 +209,11 @@ export class Loading implements ComponentInterface, OverlayInterface {
   connectedCallback() {
     prepareOverlay(this.el);
     this.triggerChanged();
+
+    // Re-apply the root lock if moved without dismiss() being called
+    if (this.presented) {
+      restoreRootFocusTrapAccessibility(this.el);
+    }
   }
 
   componentWillLoad() {
@@ -214,7 +221,9 @@ export class Loading implements ComponentInterface, OverlayInterface {
       const mode = getIonMode(this);
       this.spinner = config.get('loadingSpinner', config.get('spinner', mode === 'ios' ? 'lines' : 'crescent'));
     }
-    setOverlayId(this.el);
+    if (!this.htmlAttributes?.id) {
+      setOverlayId(this.el);
+    }
   }
 
   componentDidLoad() {
@@ -240,6 +249,11 @@ export class Loading implements ComponentInterface, OverlayInterface {
 
   disconnectedCallback() {
     this.triggerController.removeClickListener();
+
+    // Clean up aria-hidden if removed without dismiss() being called
+    if (this.presented) {
+      cleanupRootFocusTrapAccessibility();
+    }
   }
 
   /**
@@ -262,16 +276,15 @@ export class Loading implements ComponentInterface, OverlayInterface {
 
   /**
    * Dismiss the loading overlay after it has been presented.
+   * This is a no-op if the overlay has not been presented yet. If you want
+   * to remove an overlay from the DOM that was never presented, use the
+   * [remove](https://developer.mozilla.org/en-US/docs/Web/API/Element/remove) method.
    *
    * @param data Any data to emit in the dismiss events.
    * @param role The role of the element that is dismissing the loading.
    * This can be useful in a button handler for determining which button was
-   * clicked to dismiss the loading.
-   * Some examples include: ``"cancel"`, `"destructive"`, "selected"`, and `"backdrop"`.
-   *
-   * This is a no-op if the overlay has not been presented yet. If you want
-   * to remove an overlay from the DOM that was never presented, use the
-   * [remove](https://developer.mozilla.org/en-US/docs/Web/API/Element/remove) method.
+   * clicked to dismiss the loading. Some examples include:
+   * `"cancel"`, `"destructive"`, `"selected"`, and `"backdrop"`.
    */
   @Method()
   async dismiss(data?: any, role?: string): Promise<boolean> {
@@ -354,7 +367,7 @@ export class Loading implements ComponentInterface, OverlayInterface {
       >
         <ion-backdrop visible={this.showBackdrop} tappable={this.backdropDismiss} />
 
-        <div tabindex="0"></div>
+        <div tabindex="0" aria-hidden="true"></div>
 
         <div class="loading-wrapper ion-overlay-wrapper">
           {spinner && (
@@ -366,7 +379,7 @@ export class Loading implements ComponentInterface, OverlayInterface {
           {message !== undefined && this.renderLoadingMessage(msgId)}
         </div>
 
-        <div tabindex="0"></div>
+        <div tabindex="0" aria-hidden="true"></div>
       </Host>
     );
   }

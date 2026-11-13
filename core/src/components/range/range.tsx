@@ -1,8 +1,8 @@
 import type { ComponentInterface, EventEmitter } from '@stencil/core';
-import { Component, Element, Event, Host, Prop, State, Watch, h } from '@stencil/core';
+import { Build, Component, Element, Event, Host, Prop, State, Watch, h } from '@stencil/core';
 import { findClosestIonContent, disableContentScrollY, resetContentScrollY } from '@utils/content';
 import type { Attributes } from '@utils/helpers';
-import { inheritAriaAttributes, clamp, debounceEvent, renderHiddenInput } from '@utils/helpers';
+import { inheritAriaAttributes, clamp, debounceEvent, renderHiddenInput, isSafeNumber } from '@utils/helpers';
 import { printIonWarning } from '@utils/logging';
 import { isRTL } from '@utils/rtl';
 import { createColorClasses, hostContext } from '@utils/theme';
@@ -13,6 +13,7 @@ import { roundToMaxDecimalPlaces } from '../../utils/floating-point';
 
 import type {
   KnobName,
+  KnobPosition,
   RangeChangeEventDetail,
   RangeKnobMoveEndEventDetail,
   RangeKnobMoveStartEventDetail,
@@ -29,13 +30,30 @@ import type {
  * @slot start - Content is placed to the left of the range slider in LTR, and to the right in RTL.
  * @slot end - Content is placed to the right of the range slider in LTR, and to the left in RTL.
  *
+ * @part label - The label text describing the range.
  * @part tick - An inactive tick mark.
  * @part tick-active - An active tick mark.
- * @part pin - The counter that appears above a knob.
- * @part knob - The handle that is used to drag the range.
  * @part bar - The inactive part of the bar.
  * @part bar-active - The active part of the bar.
- * @part label - The label text describing the range.
+ * @part knob-handle - The container that wraps the knob and handles drag interactions.
+ * @part knob-handle-a - The container for the knob with the static `A` identity when `dualKnobs` is `true`. This identity does not change, even if the knobs cross and swap which one represents the lower or upper value.
+ * @part knob-handle-b - The container for the knob with the static `B` identity when `dualKnobs` is `true`. This identity does not change, even if the knobs cross and swap which one represents the lower or upper value.
+ * @part knob-handle-lower - The container for the knob whose current `value` is `lower` when `dualKnobs` is `true`. The lower and upper parts swap which knob handle they refer to when the knobs cross.
+ * @part knob-handle-upper - The container for the knob whose current `value` is `upper` when `dualKnobs` is `true`. The lower and upper parts swap which knob handle they refer to when the knobs cross.
+ * @part pin - The value indicator displayed above a knob.
+ * @part pin-a - The value indicator above the knob with the static `A` identity when `dualKnobs` is `true`. This identity does not change, even if the knobs cross and swap which one represents the lower or upper value.
+ * @part pin-b - The value indicator above the knob with the static `B` identity when `dualKnobs` is `true`. This identity does not change, even if the knobs cross and swap which one represents the lower or upper value.
+ * @part pin-lower - The value indicator above the knob whose current `value` is `lower` when `dualKnobs` is `true`. The lower and upper parts swap which pin they refer to when the knobs cross.
+ * @part pin-upper - The value indicator above the knob whose current `value` is `upper` when `dualKnobs` is `true`. The lower and upper parts swap which pin they refer to when the knobs cross.
+ * @part knob - The visual knob element on the range track.
+ * @part knob-a - The visual knob for the static `A` identity when `dualKnobs` is `true`. This identity does not change, even if the knobs cross and swap which one represents the lower or upper value.
+ * @part knob-b - The visual knob for the static `B` identity when `dualKnobs` is `true`. This identity does not change, even if the knobs cross and swap which one represents the lower or upper value.
+ * @part knob-lower - The visual knob whose current `value` is `lower` when `dualKnobs` is `true`. The lower and upper parts swap which knob they refer to when the knobs cross.
+ * @part knob-upper - The visual knob whose current `value` is `upper` when `dualKnobs` is `true`. The lower and upper parts swap which knob they refer to when the knobs cross.
+ * @part activated - Added to the knob-handle, knob, and pin when the knob is active. Only one set has this part at a time when `dualKnobs` is `true`.
+ * @part focused - Added to the knob-handle, knob, and pin that currently has focus. Only one set has this part at a time when `dualKnobs` is `true`.
+ * @part hover - Added to the knob-handle, knob, and pin when the knob has hover. Only one set has this part at a time when `dualKnobs` is `true`.
+ * @part pressed - Added to the knob-handle, knob, and pin that is currently being pressed to drag. Only one set has this part at a time when `dualKnobs` is `true`.
  */
 @Component({
   tag: 'ion-range',
@@ -57,11 +75,27 @@ export class Range implements ComponentInterface {
   private contentEl: HTMLElement | null = null;
   private initialContentScrollY = true;
   private originalIonInput?: EventEmitter<RangeChangeEventDetail>;
+  /**
+   * Used to avoid setting the focused state on click or tap. The focused
+   * state is only set when the focus comes from the keyboard (e.g. Tab).
+   * This is set to true on pointer down (mouse/touch).
+   */
+  private focusFromPointer = false;
+  /**
+   * Observes class changes on the knob handles to keep the activatedKnob
+   * state in sync with the ion-activated class. This is necessary to
+   * determine which knob the user is dragging when using dual knobs and
+   * apply the activated part correctly.
+   */
+  private activatedObserver?: MutationObserver;
 
   @Element() el!: HTMLIonRangeElement;
 
   @State() private ratioA = 0;
   @State() private ratioB = 0;
+  @State() private activatedKnob: KnobName;
+  @State() private focusedKnob: KnobName;
+  @State() private hoveredKnob: KnobName;
   @State() private pressedKnob: KnobName;
 
   /**
@@ -100,16 +134,29 @@ export class Range implements ComponentInterface {
   @Prop() label?: string;
 
   /**
-   * Show two knobs.
+   * If `true`, the range shows two knobs and `value` is an object with `lower`
+   * and `upper` properties. If `false`, the range shows one knob and `value` is
+   * a number.
    */
   @Prop() dualKnobs = false;
+
+  @Watch('dualKnobs')
+  protected dualKnobsChanged() {
+    if (!this.noUpdate) {
+      this.updateRatio();
+    }
+  }
 
   /**
    * Minimum integer value of the range.
    */
   @Prop() min = 0;
   @Watch('min')
-  protected minChanged() {
+  protected minChanged(newValue: number) {
+    if (!isSafeNumber(newValue)) {
+      this.min = 0;
+    }
+
     if (!this.noUpdate) {
       this.updateRatio();
     }
@@ -120,7 +167,11 @@ export class Range implements ComponentInterface {
    */
   @Prop() max = 100;
   @Watch('max')
-  protected maxChanged() {
+  protected maxChanged(newValue: number) {
+    if (!isSafeNumber(newValue)) {
+      this.max = 100;
+    }
+
     if (!this.noUpdate) {
       this.updateRatio();
     }
@@ -151,6 +202,12 @@ export class Range implements ComponentInterface {
    * Specifies the value granularity.
    */
   @Prop() step = 1;
+  @Watch('step')
+  protected stepChanged(newValue: number) {
+    if (!isSafeNumber(newValue)) {
+      this.step = 1;
+    }
+  }
 
   /**
    * If `true`, tick marks are displayed based on the step value.
@@ -169,13 +226,13 @@ export class Range implements ComponentInterface {
     if (activeBarStart !== undefined) {
       if (activeBarStart > this.max) {
         printIonWarning(
-          `Range: The value of activeBarStart (${activeBarStart}) is greater than the max (${this.max}). Valid values are greater than or equal to the min value and less than or equal to the max value.`,
+          `[ion-range] - The value of activeBarStart (${activeBarStart}) is greater than the max (${this.max}). Valid values are greater than or equal to the min value and less than or equal to the max value.`,
           this.el
         );
         this.activeBarStart = this.max;
       } else if (activeBarStart < this.min) {
         printIonWarning(
-          `Range: The value of activeBarStart (${activeBarStart}) is less than the min (${this.min}). Valid values are greater than or equal to the min value and less than or equal to the max value.`,
+          `[ion-range] - The value of activeBarStart (${activeBarStart}) is less than the min (${this.min}). Valid values are greater than or equal to the min value and less than or equal to the max value.`,
           this.el
         );
         this.activeBarStart = this.min;
@@ -199,11 +256,31 @@ export class Range implements ComponentInterface {
    */
   @Prop({ mutable: true }) value: RangeValue = 0;
   @Watch('value')
-  protected valueChanged() {
+  protected valueChanged(newValue: RangeValue, oldValue: RangeValue) {
+    const valuesChanged = this.compareValues(newValue, oldValue);
+    if (valuesChanged) {
+      this.ionInput.emit({ value: this.value });
+    }
+
     if (!this.noUpdate) {
       this.updateRatio();
     }
   }
+
+  /**
+   * Compares two RangeValue inputs to determine if they are different.
+   *
+   * @param newVal - The new value.
+   * @param oldVal - The old value.
+   * @returns `true` if the values are different, `false` otherwise.
+   */
+  private compareValues = (newVal: RangeValue, oldVal: RangeValue) => {
+    if (typeof newVal === 'object' && typeof oldVal === 'object') {
+      return newVal.lower !== oldVal.lower || newVal.upper !== oldVal.upper;
+    }
+
+    return newVal !== oldVal;
+  };
 
   private clampBounds = (value: any): number => {
     return clamp(this.min, value, this.max);
@@ -290,6 +367,34 @@ export class Range implements ComponentInterface {
     }
   };
 
+  /**
+   * Observes the knob handles for the ion-activated class and syncs
+   * activatedKnob so the activated part is correctly set on the handle,
+   * knob, and pin.
+   */
+  private setupActivatedObserver = () => {
+    const knobHandleA = this.el.shadowRoot!.querySelector('.range-knob-handle-a');
+    const knobHandleB = this.el.shadowRoot!.querySelector('.range-knob-handle-b');
+
+    const syncActivated = () => {
+      this.activatedKnob = (knobHandleA as HTMLElement)?.classList.contains('ion-activated')
+        ? 'A'
+        : (knobHandleB as HTMLElement)?.classList.contains('ion-activated')
+        ? 'B'
+        : undefined;
+    };
+
+    if (Build.isBrowser && typeof MutationObserver !== 'undefined') {
+      this.activatedObserver = new MutationObserver(syncActivated);
+      this.activatedObserver.observe(this.el.shadowRoot!, {
+        attributes: true,
+        attributeFilter: ['class'],
+        subtree: true,
+      });
+    }
+    syncActivated();
+  };
+
   componentWillLoad() {
     /**
      * If user has custom ID set then we should
@@ -300,12 +405,18 @@ export class Range implements ComponentInterface {
     }
 
     this.inheritedAttributes = inheritAriaAttributes(this.el);
+    // If min, max, or step are not safe, set them to 0, 100, and 1, respectively.
+    // Each watch does this, but not before the initial load.
+    this.min = isSafeNumber(this.min) ? this.min : 0;
+    this.max = isSafeNumber(this.max) ? this.max : 100;
+    this.step = isSafeNumber(this.step) ? this.step : 1;
   }
 
   componentDidLoad() {
     this.originalIonInput = this.ionInput;
     this.setupGesture();
     this.updateRatio();
+    this.setupActivatedObserver();
     this.didLoad = true;
   }
 
@@ -323,15 +434,21 @@ export class Range implements ComponentInterface {
      */
     if (this.didLoad) {
       this.setupGesture();
+      this.setupActivatedObserver();
     }
 
-    this.contentEl = findClosestIonContent(this.el);
+    const ionContent = findClosestIonContent(this.el);
+    this.contentEl = ionContent?.querySelector('.ion-content-scroll-host') ?? ionContent;
   }
 
   disconnectedCallback() {
     if (this.gesture) {
       this.gesture.destroy();
       this.gesture = undefined;
+    }
+    if (this.activatedObserver) {
+      this.activatedObserver.disconnect();
+      this.activatedObserver = undefined;
     }
   }
 
@@ -418,7 +535,7 @@ export class Range implements ComponentInterface {
      *
      * This only needs to be done once.
      */
-    if (contentEl && this.initialContentScrollY === undefined) {
+    if (contentEl && this.pressedKnob === undefined) {
       this.initialContentScrollY = disableContentScrollY(contentEl);
     }
 
@@ -427,7 +544,7 @@ export class Range implements ComponentInterface {
      * started dragging the knob.
      *
      * This is necessary to determine which knob the user is dragging,
-     * especially when it's a dual knob.
+     * especially when using dual knobs.
      * Plus, it determines when to apply certain styles.
      *
      * This only needs to be done once since the knob won't change
@@ -449,14 +566,14 @@ export class Range implements ComponentInterface {
    */
   private onEnd(detail: GestureDetail | MouseEvent) {
     const { contentEl, initialContentScrollY } = this;
-    const currentX = (detail as GestureDetail).currentX || (detail as MouseEvent).clientX;
+    const currentX = (detail as GestureDetail).currentX ?? (detail as MouseEvent).clientX;
 
     /**
      * The `pressedKnob` can be undefined if the user never
      * dragged the knob. They just tapped on the bar.
      *
      * This is necessary to determine which knob the user is changing,
-     * especially when it's a dual knob.
+     * especially when using dual knobs.
      * Plus, it determines when to apply certain styles.
      */
     if (this.pressedKnob === undefined) {
@@ -469,12 +586,13 @@ export class Range implements ComponentInterface {
      *
      * The user can now scroll on the view in the next gesture event.
      */
-    if (contentEl && initialContentScrollY !== undefined) {
+    if (contentEl && this.pressedKnob !== undefined) {
       resetContentScrollY(contentEl, initialContentScrollY);
     }
 
     // update the active knob's position
     this.update(currentX);
+
     /**
      * Reset the pressed knob to undefined since the user
      * may start dragging a different knob in the next gesture event.
@@ -519,8 +637,6 @@ export class Range implements ComponentInterface {
       ratio = 1 - ratio;
     }
     this.pressedKnob = !this.dualKnobs || Math.abs(this.ratioA - ratio) < Math.abs(this.ratioB - ratio) ? 'A' : 'B';
-
-    this.setFocus(this.pressedKnob);
   }
 
   private get valA() {
@@ -552,9 +668,26 @@ export class Range implements ComponentInterface {
   private updateRatio() {
     const value = this.getValue() as any;
     const { min, max } = this;
+
+    /**
+     * For dual knobs, value gives lower/upper but not which is A vs B.
+     * Assign (lowerRatio, upperRatio) to (ratioA, ratioB) in the way that
+     * minimizes change from the current ratios so the knobs don't swap.
+     */
     if (this.dualKnobs) {
-      this.ratioA = valueToRatio(value.lower, min, max);
-      this.ratioB = valueToRatio(value.upper, min, max);
+      const lowerRatio = valueToRatio(value.lower, min, max);
+      const upperRatio = valueToRatio(value.upper, min, max);
+
+      if (
+        Math.abs(this.ratioA - lowerRatio) + Math.abs(this.ratioB - upperRatio) <=
+        Math.abs(this.ratioA - upperRatio) + Math.abs(this.ratioB - lowerRatio)
+      ) {
+        this.ratioA = lowerRatio;
+        this.ratioB = upperRatio;
+      } else {
+        this.ratioA = upperRatio;
+        this.ratioB = lowerRatio;
+      }
     } else {
       this.ratioA = valueToRatio(value, min, max);
     }
@@ -571,25 +704,13 @@ export class Range implements ComponentInterface {
           upper: Math.max(valA, valB),
         };
 
-    this.ionInput.emit({ value: this.value });
-
     this.noUpdate = false;
-  }
-
-  private setFocus(knob: KnobName) {
-    if (this.el.shadowRoot) {
-      const knobEl = this.el.shadowRoot.querySelector(knob === 'A' ? '.range-knob-a' : '.range-knob-b') as
-        | HTMLElement
-        | undefined;
-      if (knobEl) {
-        knobEl.focus();
-      }
-    }
   }
 
   private onBlur = () => {
     if (this.hasFocus) {
       this.hasFocus = false;
+      this.focusedKnob = undefined;
       this.ionBlur.emit();
     }
   };
@@ -599,6 +720,48 @@ export class Range implements ComponentInterface {
       this.hasFocus = true;
       this.ionFocus.emit();
     }
+  };
+
+  private onKnobFocus = (knob: KnobName) => {
+    // Clicking focuses the range which is needed for the keyboard,
+    // but we only want to add the ion-focused class when focused via Tab.
+    if (!this.focusFromPointer) {
+      this.focusedKnob = knob;
+    } else {
+      this.focusFromPointer = false;
+      this.focusedKnob = undefined;
+    }
+
+    // If the knob was not already focused, emit the focus event
+    if (!this.hasFocus) {
+      this.hasFocus = true;
+      this.ionFocus.emit();
+    }
+  };
+
+  private onKnobBlur = () => {
+    // Check if focus is moving to another knob within the same range
+    // by delaying the reset to allow the new focus to register
+    setTimeout(() => {
+      const activeElement = this.el.shadowRoot?.activeElement;
+      const isStillFocusedOnKnob = activeElement && activeElement.classList.contains('range-knob-handle');
+
+      if (!isStillFocusedOnKnob) {
+        if (this.hasFocus) {
+          this.hasFocus = false;
+          this.focusedKnob = undefined;
+          this.ionBlur.emit();
+        }
+      }
+    }, 0);
+  };
+
+  private onKnobMouseEnter = (knob: KnobName) => {
+    this.hoveredKnob = knob;
+  };
+
+  private onKnobMouseLeave = () => {
+    this.hoveredKnob = undefined;
   };
 
   /**
@@ -625,6 +788,9 @@ export class Range implements ComponentInterface {
       max,
       step,
       handleKeyboard,
+      activatedKnob,
+      focusedKnob,
+      hoveredKnob,
       pressedKnob,
       disabled,
       pin,
@@ -707,6 +873,9 @@ export class Range implements ComponentInterface {
       <div
         class="range-slider"
         ref={(rangeEl) => (this.rangeSlider = rangeEl)}
+        onPointerDown={() => {
+          this.focusFromPointer = true;
+        }}
         /**
          * Since the gesture has a threshold, the value
          * won't change until the user has dragged past
@@ -719,6 +888,8 @@ export class Range implements ComponentInterface {
          * we need to listen for the "pointerUp" event.
          */
         onPointerUp={(ev: PointerEvent) => {
+          this.focusFromPointer = false;
+
           /**
            * If the user drags the knob on the web
            * version (does not occur on mobile),
@@ -765,6 +936,11 @@ export class Range implements ComponentInterface {
 
         {renderKnob(rtl, {
           knob: 'A',
+          position: getKnobPosition('A', this.ratioA, this.ratioB, this.dualKnobs),
+          dualKnobs: this.dualKnobs,
+          activated: activatedKnob === 'A',
+          focused: focusedKnob === 'A',
+          hovered: hoveredKnob === 'A',
           pressed: pressedKnob === 'A',
           value: this.valA,
           ratio: this.ratioA,
@@ -775,11 +951,20 @@ export class Range implements ComponentInterface {
           min,
           max,
           inheritedAttributes,
+          onKnobFocus: this.onKnobFocus,
+          onKnobBlur: this.onKnobBlur,
+          onKnobMouseEnter: this.onKnobMouseEnter,
+          onKnobMouseLeave: this.onKnobMouseLeave,
         })}
 
         {this.dualKnobs &&
           renderKnob(rtl, {
             knob: 'B',
+            position: getKnobPosition('B', this.ratioA, this.ratioB, this.dualKnobs),
+            dualKnobs: this.dualKnobs,
+            activated: activatedKnob === 'B',
+            focused: focusedKnob === 'B',
+            hovered: hoveredKnob === 'B',
             pressed: pressedKnob === 'B',
             value: this.valB,
             ratio: this.ratioB,
@@ -790,13 +975,17 @@ export class Range implements ComponentInterface {
             min,
             max,
             inheritedAttributes,
+            onKnobFocus: this.onKnobFocus,
+            onKnobBlur: this.onKnobBlur,
+            onKnobMouseEnter: this.onKnobMouseEnter,
+            onKnobMouseLeave: this.onKnobMouseLeave,
           })}
       </div>
     );
   }
 
   render() {
-    const { disabled, el, hasLabel, rangeId, pin, pressedKnob, labelPlacement, label } = this;
+    const { disabled, el, hasLabel, rangeId, pin, pressedKnob, labelPlacement, label, dualKnobs, min, max } = this;
 
     const inItem = hostContext('ion-item', el);
 
@@ -819,6 +1008,21 @@ export class Range implements ComponentInterface {
 
     const mode = getIonMode(this);
 
+    /**
+     * Determine the name and position of the pressed knob to apply
+     * Host classes for styling.
+     */
+    const pressedKnobName = dualKnobs ? pressedKnob?.toLowerCase() : undefined;
+    const pressedKnobPosition =
+      dualKnobs && pressedKnob ? getKnobPosition(pressedKnob, this.ratioA, this.ratioB, dualKnobs) : undefined;
+
+    /**
+     * Determine if any knob is at the min or max value to
+     * apply Host classes for styling.
+     */
+    const valueAtMin = dualKnobs ? this.valA === min || this.valB === min : this.valA === min;
+    const valueAtMax = dualKnobs ? this.valA === max || this.valB === max : this.valA === max;
+
     renderHiddenInput(true, el, this.name, JSON.stringify(this.getValue()), disabled);
 
     return (
@@ -830,11 +1034,16 @@ export class Range implements ComponentInterface {
           [mode]: true,
           'in-item': inItem,
           'range-disabled': disabled,
+          'range-dual-knobs': dualKnobs,
           'range-pressed': pressedKnob !== undefined,
+          [`range-pressed-${pressedKnobName}`]: pressedKnob !== undefined && pressedKnobName !== undefined,
+          [`range-pressed-${pressedKnobPosition}`]: pressedKnob !== undefined && pressedKnobPosition !== undefined,
           'range-has-pin': pin,
           [`range-label-placement-${labelPlacement}`]: true,
           'range-item-start-adjustment': needsStartAdjustment,
           'range-item-end-adjustment': needsEndAdjustment,
+          'range-value-min': valueAtMin,
+          'range-value-max': valueAtMax,
         })}
       >
         <label class="range-wrapper" id="range-label">
@@ -860,21 +1069,51 @@ export class Range implements ComponentInterface {
 
 interface RangeKnob {
   knob: KnobName;
+  position: KnobPosition;
+  dualKnobs: boolean;
   value: number;
   ratio: number;
   min: number;
   max: number;
   disabled: boolean;
   pressed: boolean;
+  focused: boolean;
+  hovered: boolean;
+  activated: boolean;
   pin: boolean;
   pinFormatter: PinFormatter;
   inheritedAttributes: Attributes;
   handleKeyboard: (name: KnobName, isIncrease: boolean) => void;
+  onKnobFocus: (knob: KnobName) => void;
+  onKnobBlur: () => void;
+  onKnobMouseEnter: (knob: KnobName) => void;
+  onKnobMouseLeave: () => void;
 }
 
 const renderKnob = (
   rtl: boolean,
-  { knob, value, ratio, min, max, disabled, pressed, pin, handleKeyboard, pinFormatter, inheritedAttributes }: RangeKnob
+  {
+    knob,
+    position,
+    dualKnobs,
+    value,
+    ratio,
+    min,
+    max,
+    disabled,
+    activated,
+    focused,
+    hovered,
+    pressed,
+    pin,
+    handleKeyboard,
+    pinFormatter,
+    inheritedAttributes,
+    onKnobFocus,
+    onKnobBlur,
+    onKnobMouseEnter,
+    onKnobMouseLeave,
+  }: RangeKnob
 ) => {
   const start = rtl ? 'right' : 'left';
 
@@ -903,16 +1142,34 @@ const renderKnob = (
           ev.stopPropagation();
         }
       }}
+      onFocus={() => onKnobFocus(knob)}
+      onBlur={onKnobBlur}
+      onMouseEnter={() => onKnobMouseEnter(knob)}
+      onMouseLeave={onKnobMouseLeave}
       class={{
         'range-knob-handle': true,
-        'range-knob-a': knob === 'A',
-        'range-knob-b': knob === 'B',
+        'range-knob-handle-a': knob === 'A',
+        'range-knob-handle-b': knob === 'B',
         'range-knob-pressed': pressed,
         'range-knob-min': value === min,
         'range-knob-max': value === max,
         'ion-activatable': true,
         'ion-focusable': true,
+        'ion-focused': focused,
       }}
+      part={[
+        'knob-handle',
+        dualKnobs && knob === 'A' && 'knob-handle-a',
+        dualKnobs && knob === 'B' && 'knob-handle-b',
+        dualKnobs && position === 'lower' && 'knob-handle-lower',
+        dualKnobs && position === 'upper' && 'knob-handle-upper',
+        pressed && 'pressed',
+        focused && 'focused',
+        hovered && 'hover',
+        activated && 'activated',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={knobStyle()}
       role="slider"
       tabindex={disabled ? -1 : 0}
@@ -924,13 +1181,70 @@ const renderKnob = (
       aria-valuenow={value}
     >
       {pin && (
-        <div class="range-pin" role="presentation" part="pin">
+        <div
+          class="range-pin"
+          role="presentation"
+          part={[
+            'pin',
+            dualKnobs && knob === 'A' && 'pin-a',
+            dualKnobs && knob === 'B' && 'pin-b',
+            dualKnobs && position === 'lower' && 'pin-lower',
+            dualKnobs && position === 'upper' && 'pin-upper',
+            pressed && 'pressed',
+            focused && 'focused',
+            hovered && 'hover',
+            activated && 'activated',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
           {pinFormatter(value)}
         </div>
       )}
-      <div class="range-knob" role="presentation" part="knob" />
+      <div
+        class="range-knob"
+        role="presentation"
+        part={[
+          'knob',
+          dualKnobs && knob === 'A' && 'knob-a',
+          dualKnobs && knob === 'B' && 'knob-b',
+          dualKnobs && position === 'lower' && 'knob-lower',
+          dualKnobs && position === 'upper' && 'knob-upper',
+          pressed && 'pressed',
+          focused && 'focused',
+          hovered && 'hover',
+          activated && 'activated',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      />
     </div>
   );
+};
+
+/**
+ * Returns whether the given knob is at the lower or upper position based
+ * on current ratios for the given knob.
+ *
+ * When both knobs have the same ratio, we only want one "lower" and one
+ * "upper" position so that the `lower` and `upper` parts are not applied to
+ * the same knob. In that case, we treat knob "A" as the lower position and
+ * knob "B" as the upper position.
+ */
+const getKnobPosition = (knob: 'A' | 'B', ratioA: number, ratioB: number, dualKnobs: boolean): 'lower' | 'upper' => {
+  if (!dualKnobs) {
+    return 'lower';
+  }
+
+  if (ratioA === ratioB) {
+    return knob === 'A' ? 'lower' : 'upper';
+  }
+
+  if (knob === 'A') {
+    return ratioA < ratioB ? 'lower' : 'upper';
+  }
+
+  return ratioB < ratioA ? 'lower' : 'upper';
 };
 
 const ratioToValue = (ratio: number, min: number, max: number, step: number): number => {

@@ -1,11 +1,12 @@
 import type { ComponentInterface, EventEmitter } from '@stencil/core';
-import { Watch, Component, Element, Event, Host, Method, Prop, h, readTask } from '@stencil/core';
+import { Watch, Component, Element, Event, Host, Listen, Method, Prop, State, h, readTask } from '@stencil/core';
 import type { Gesture } from '@utils/gesture';
 import { createButtonActiveGesture } from '@utils/gesture/button-active';
 import { raf } from '@utils/helpers';
 import { createLockController } from '@utils/lock-controller';
 import {
   BACKDROP,
+  cleanupRootFocusTrapAccessibility,
   createDelegateController,
   createTriggerController,
   dismiss,
@@ -13,14 +14,17 @@ import {
   isCancel,
   prepareOverlay,
   present,
+  restoreRootFocusTrapAccessibility,
   safeCall,
   setOverlayId,
 } from '@utils/overlays';
+import { renderOptionLabel } from '@utils/select-option-render';
 import { getClassMap } from '@utils/theme';
 
 import { getIonMode } from '../../global/ionic-global';
 import type { AnimationBuilder, CssClassMap, FrameworkDelegate, OverlayInterface } from '../../interface';
 import type { OverlayEventDetail } from '../../utils/overlays-interface';
+import type { SelectActionSheetButton } from '../select/select-interface';
 
 import type { ActionSheetButton } from './action-sheet-interface';
 import { iosEnterAnimation } from './animations/ios.enter';
@@ -46,10 +50,17 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
   private wrapperEl?: HTMLElement;
   private groupEl?: HTMLElement;
   private gesture?: Gesture;
+  private hasRadioButtons = false;
 
   presented = false;
   lastFocus?: HTMLElement;
   animation?: any;
+
+  /**
+   * The ID of the currently active/selected radio button.
+   * Used for keyboard navigation and ARIA attributes.
+   */
+  @State() activeRadioId?: string;
 
   @Element() el!: HTMLIonActionSheetElement;
 
@@ -81,6 +92,22 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
    * An array of buttons for the action sheet.
    */
   @Prop() buttons: (ActionSheetButton | string)[] = [];
+  @Watch('buttons')
+  buttonsChanged() {
+    const radioButtons = this.getRadioButtons();
+    this.hasRadioButtons = radioButtons.length > 0;
+
+    // Initialize activeRadioId when buttons change
+    if (this.hasRadioButtons) {
+      const checkedButton = radioButtons.find((b) => b.htmlAttributes?.['aria-checked'] === 'true');
+
+      if (checkedButton) {
+        const allButtons = this.getButtons();
+        const checkedIndex = allButtons.indexOf(checkedButton);
+        this.activeRadioId = this.getButtonId(checkedButton, checkedIndex);
+      }
+    }
+  }
 
   /**
    * Additional classes to apply for custom CSS. If multiple classes are
@@ -210,16 +237,15 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
 
   /**
    * Dismiss the action sheet overlay after it has been presented.
+   * This is a no-op if the overlay has not been presented yet. If you want
+   * to remove an overlay from the DOM that was never presented, use the
+   * [remove](https://developer.mozilla.org/en-US/docs/Web/API/Element/remove) method.
    *
    * @param data Any data to emit in the dismiss events.
    * @param role The role of the element that is dismissing the action sheet.
    * This can be useful in a button handler for determining which button was
-   * clicked to dismiss the action sheet.
-   * Some examples include: ``"cancel"`, `"destructive"`, "selected"`, and `"backdrop"`.
-   *
-   * This is a no-op if the overlay has not been presented yet. If you want
-   * to remove an overlay from the DOM that was never presented, use the
-   * [remove](https://developer.mozilla.org/en-US/docs/Web/API/Element/remove) method.
+   * clicked to dismiss the action sheet. Some examples include:
+   * `"cancel"`, `"destructive"`, `"selected"`, and `"backdrop"`.
    */
   @Method()
   async dismiss(data?: any, role?: string): Promise<boolean> {
@@ -278,10 +304,51 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
     return true;
   }
 
+  /**
+   * Get all buttons regardless of role.
+   */
   private getButtons(): ActionSheetButton[] {
     return this.buttons.map((b) => {
       return typeof b === 'string' ? { text: b } : b;
     });
+  }
+
+  /**
+   * Get all radio buttons (buttons with role="radio").
+   */
+  private getRadioButtons(): ActionSheetButton[] {
+    return this.getButtons().filter((b) => {
+      const role = b.htmlAttributes?.role;
+      return role === 'radio' && !isCancel(role);
+    });
+  }
+
+  /**
+   * Handle radio button selection and update aria-checked state.
+   *
+   * @param button The radio button that was selected.
+   */
+  private selectRadioButton(button: ActionSheetButton) {
+    const buttonId = this.getButtonId(button);
+
+    // Set the active radio ID (this will trigger a re-render and update aria-checked)
+    this.activeRadioId = buttonId;
+  }
+
+  /**
+   * Get or generate an ID for a button.
+   *
+   * @param button The button for which to get the ID.
+   * @param index Optional index of the button in the buttons array.
+   * @returns The ID of the button.
+   */
+  private getButtonId(button: ActionSheetButton, index?: number): string {
+    if (button.id) {
+      return button.id;
+    }
+    const allButtons = this.getButtons();
+    const buttonIndex = index !== undefined ? index : allButtons.indexOf(button);
+    return `action-sheet-button-${this.overlayIndex}-${buttonIndex}`;
   }
 
   private onBackdropTap = () => {
@@ -296,9 +363,108 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
     }
   };
 
+  /**
+   * When the action sheet has radio buttons, we want to follow the
+   * keyboard navigation pattern for radio groups:
+   * - Arrow Down/Right: Move to the next radio button (wrap to first if at end)
+   * - Arrow Up/Left: Move to the previous radio button (wrap to last if at start)
+   * - Space/Enter: Select the focused radio button and trigger its handler
+   */
+  @Listen('keydown')
+  onKeydown(ev: KeyboardEvent) {
+    // Only handle keyboard navigation if we have radio buttons
+    if (!this.hasRadioButtons || !this.presented) {
+      return;
+    }
+
+    const target = ev.target as HTMLElement;
+
+    // Ignore if the target element is not within the action sheet or not a radio button
+    if (
+      !this.el.contains(target) ||
+      !target.classList.contains('action-sheet-button') ||
+      target.getAttribute('role') !== 'radio'
+    ) {
+      return;
+    }
+
+    // Get all radio button elements and filter out disabled ones
+    const radios = Array.from(this.el.querySelectorAll('.action-sheet-button[role="radio"]')).filter(
+      (el) => !(el as HTMLButtonElement).disabled
+    ) as HTMLButtonElement[];
+    const currentIndex = radios.findIndex((radio) => radio.id === target.id);
+
+    if (currentIndex === -1) {
+      return;
+    }
+
+    const allButtons = this.getButtons();
+    const radioButtons = this.getRadioButtons();
+    /**
+     * Build a map of button element IDs to their ActionSheetButton
+     * config objects.
+     * This allows us to quickly look up which button config corresponds
+     * to a DOM element when handling keyboard navigation
+     * (e.g., whenuser presses Space/Enter or arrow keys).
+     * The key is the ID that was set on the DOM element during render,
+     * and the value is the ActionSheetButton config that contains the
+     * handler and other properties.
+     */
+    const buttonIdMap = new Map<string, ActionSheetButton>();
+
+    radioButtons.forEach((b) => {
+      const allIndex = allButtons.indexOf(b);
+      const buttonId = this.getButtonId(b, allIndex);
+      buttonIdMap.set(buttonId, b);
+    });
+
+    let nextEl: HTMLButtonElement | undefined;
+
+    if (['ArrowDown', 'ArrowRight'].includes(ev.key)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      nextEl = currentIndex === radios.length - 1 ? radios[0] : radios[currentIndex + 1];
+    } else if (['ArrowUp', 'ArrowLeft'].includes(ev.key)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      nextEl = currentIndex === 0 ? radios[radios.length - 1] : radios[currentIndex - 1];
+    } else if (ev.key === ' ' || ev.key === 'Enter') {
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      const button = buttonIdMap.get(target.id);
+      if (button) {
+        this.selectRadioButton(button);
+        this.buttonClick(button);
+      }
+
+      return;
+    }
+
+    // Focus the next radio button
+    if (nextEl) {
+      const button = buttonIdMap.get(nextEl.id);
+      if (button) {
+        this.selectRadioButton(button);
+        nextEl.focus();
+      }
+    }
+  }
+
   connectedCallback() {
     prepareOverlay(this.el);
     this.triggerChanged();
+
+    // `componentDidLoad` only fires once per instance, so a reconnect has to
+    // rebuild the gesture its disconnect destroyed.
+    this.setupButtonActiveGesture();
+
+    // Re-apply the root lock if moved without dismiss() being called
+    if (this.presented) {
+      restoreRootFocusTrapAccessibility(this.el);
+    }
   }
 
   disconnectedCallback() {
@@ -307,32 +473,51 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
       this.gesture = undefined;
     }
     this.triggerController.removeClickListener();
+
+    // Clean up aria-hidden if removed without dismiss() being called
+    if (this.presented) {
+      cleanupRootFocusTrapAccessibility();
+    }
   }
 
   componentWillLoad() {
-    setOverlayId(this.el);
+    if (!this.htmlAttributes?.id) {
+      setOverlayId(this.el);
+    }
+    // Initialize activeRadioId for radio buttons
+    this.buttonsChanged();
+  }
+
+  /**
+   * Only create gesture if:
+   * 1. A gesture does not already exist
+   * 2. App is running in iOS mode
+   * 3. A wrapper ref exists
+   * 4. A group ref exists
+   * 5. The host is still connected, since a reconnect can schedule this and
+   *    disconnect again before the task runs
+   */
+  private setupButtonActiveGesture() {
+    const { groupEl, wrapperEl } = this;
+    if (getIonMode(this) !== 'ios' || !wrapperEl || !groupEl) {
+      return;
+    }
+    readTask(() => {
+      // Bail if a call queued ahead of this one already built the gesture
+      // (a second would orphan the first with its listeners still bound), if
+      // the host disconnected while this task waited, or if the group scrolls.
+      if (this.gesture || !this.el.isConnected || groupEl.scrollHeight > groupEl.clientHeight) {
+        return;
+      }
+      this.gesture = createButtonActiveGesture(wrapperEl, (refEl: HTMLElement) =>
+        refEl.classList.contains('action-sheet-button')
+      );
+      this.gesture.enable(true);
+    });
   }
 
   componentDidLoad() {
-    /**
-     * Only create gesture if:
-     * 1. A gesture does not already exist
-     * 2. App is running in iOS mode
-     * 3. A wrapper ref exists
-     * 4. A group ref exists
-     */
-    const { groupEl, wrapperEl } = this;
-    if (!this.gesture && getIonMode(this) === 'ios' && wrapperEl && groupEl) {
-      readTask(() => {
-        const isScrollable = groupEl.scrollHeight > groupEl.clientHeight;
-        if (!isScrollable) {
-          this.gesture = createButtonActiveGesture(wrapperEl, (refEl: HTMLElement) =>
-            refEl.classList.contains('action-sheet-button')
-          );
-          this.gesture.enable(true);
-        }
-      });
-    }
+    this.setupButtonActiveGesture();
 
     /**
      * If action sheet was rendered with isOpen="true"
@@ -354,8 +539,97 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
     this.triggerChanged();
   }
 
+  private renderActionSheetButtons(filteredButtons: ActionSheetButton[]) {
+    const mode = getIonMode(this);
+    const { activeRadioId } = this;
+
+    return filteredButtons.map((b, index) => {
+      const isRadio = b.htmlAttributes?.role === 'radio';
+      const buttonId = this.getButtonId(b, index);
+      const radioButtons = this.getRadioButtons();
+      const isActiveRadio = isRadio && buttonId === activeRadioId;
+      const isFirstRadio = isRadio && b === radioButtons[0];
+
+      // For radio buttons, set tabindex: 0 for the active one, -1 for others
+      // For non-radio buttons, use default tabindex (undefined, which means 0)
+
+      /**
+       * For radio buttons, set tabindex based on activeRadioId
+       * - If the button is the active radio, tabindex is 0
+       * - If no radio is active, the first radio button should have tabindex 0
+       * - All other radio buttons have tabindex -1
+       * For non-radio buttons, use default tabindex (undefined, which means 0)
+       */
+      let tabIndex: number | undefined;
+
+      if (isRadio) {
+        // Focus on the active radio button
+        if (isActiveRadio) {
+          tabIndex = 0;
+        } else if (!activeRadioId && isFirstRadio) {
+          // No active radio, first radio gets focus
+          tabIndex = 0;
+        } else {
+          // All other radios are not focusable
+          tabIndex = -1;
+        }
+      } else {
+        tabIndex = undefined;
+      }
+
+      // For radio buttons, set aria-checked based on activeRadioId
+      // Otherwise, use the value from htmlAttributes if provided
+      const htmlAttrs = { ...b.htmlAttributes };
+      if (isRadio) {
+        htmlAttrs['aria-checked'] = isActiveRadio ? 'true' : 'false';
+      }
+
+      /**
+       * Cast to `SelectActionSheetButton` to access rich content
+       * fields (`startContent`, `endContent`, `description`)
+       * that are passed through from `ion-select` but not
+       * part of the public `ActionSheetButton` interface.
+       */
+      const richButton = b as SelectActionSheetButton;
+      const optionLabelOptions = {
+        id: buttonId,
+        label: richButton.text,
+        startContent: richButton.startContent,
+        endContent: richButton.endContent,
+        description: richButton.description,
+      };
+
+      return (
+        <button
+          {...htmlAttrs}
+          role={isRadio ? 'radio' : undefined}
+          type="button"
+          id={buttonId}
+          class={{
+            ...buttonClass(b),
+            ...(isRadio && { 'action-sheet-selected': isActiveRadio }),
+          }}
+          onClick={() => {
+            if (isRadio) {
+              this.selectRadioButton(b);
+            }
+            this.buttonClick(b);
+          }}
+          disabled={b.disabled}
+          tabIndex={tabIndex}
+        >
+          <span class="action-sheet-button-inner">
+            {b.icon && <ion-icon icon={b.icon} aria-hidden="true" lazy={false} class="action-sheet-icon" />}
+            {renderOptionLabel(optionLabelOptions, 'action-sheet-button-label', true)}
+          </span>
+          {mode === 'md' && <ion-ripple-effect></ion-ripple-effect>}
+        </button>
+      );
+    });
+  }
+
   render() {
-    const { header, htmlAttributes, overlayIndex } = this;
+    const { header, htmlAttributes, overlayIndex, hasRadioButtons } = this;
     const mode = getIonMode(this);
     const allButtons = this.getButtons();
     const cancelButton = allButtons.find((b) => b.role === 'cancel');
@@ -383,11 +657,15 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
       >
         <ion-backdrop tappable={this.backdropDismiss} />
 
-        <div tabindex="0"></div>
+        <div tabindex="0" aria-hidden="true"></div>
 
         <div class="action-sheet-wrapper ion-overlay-wrapper" ref={(el) => (this.wrapperEl = el)}>
           <div class="action-sheet-container">
-            <div class="action-sheet-group" ref={(el) => (this.groupEl = el)}>
+            <div
+              class="action-sheet-group"
+              ref={(el) => (this.groupEl = el)}
+              role={hasRadioButtons ? 'radiogroup' : undefined}
+            >
               {header !== undefined && (
                 <div
                   id={headerID}
@@ -400,22 +678,7 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
                   {this.subHeader && <div class="action-sheet-sub-title">{this.subHeader}</div>}
                 </div>
               )}
-              {buttons.map((b) => (
-                <button
-                  {...b.htmlAttributes}
-                  type="button"
-                  id={b.id}
-                  class={buttonClass(b)}
-                  onClick={() => this.buttonClick(b)}
-                  disabled={b.disabled}
-                >
-                  <span class="action-sheet-button-inner">
-                    {b.icon && <ion-icon icon={b.icon} aria-hidden="true" lazy={false} class="action-sheet-icon" />}
-                    {b.text}
-                  </span>
-                  {mode === 'md' && <ion-ripple-effect></ion-ripple-effect>}
-                </button>
-              ))}
+              {this.renderActionSheetButtons(buttons)}
             </div>
 
             {cancelButton && (
@@ -444,7 +707,7 @@ export class ActionSheet implements ComponentInterface, OverlayInterface {
           </div>
         </div>
 
-        <div tabindex="0"></div>
+        <div tabindex="0" aria-hidden="true"></div>
       </Host>
     );
   }

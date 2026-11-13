@@ -32,23 +32,147 @@ export interface PopoverStyles {
   originY: string;
   checkSafeAreaLeft: boolean;
   checkSafeAreaRight: boolean;
+  checkSafeAreaTop: boolean;
+  checkSafeAreaBottom: boolean;
   arrowTop: number;
   arrowLeft: number;
   addPopoverBottomClass: boolean;
+  hideArrow: boolean;
 }
+
+export interface SafeAreaInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/**
+ * Shared per-frame cache for safe-area insets. Avoids creating a temporary
+ * DOM element and forcing a synchronous reflow on every call within the same
+ * frame (e.g., multiple popovers presenting simultaneously). Invalidated
+ * after the next animation frame so values stay fresh across orientation
+ * changes and viewport resizes.
+ */
+let cachedInsets: SafeAreaInsets | null = null;
+let cacheInvalidationScheduled = false;
+
+/**
+ * Resolves the current --ion-safe-area-* CSS custom property values
+ * to actual pixel numbers. A temporary element is needed because
+ * getComputedStyle on :root returns the declared value of custom
+ * properties (e.g. "env(safe-area-inset-top)") rather than a
+ * resolved number. By assigning them to standard padding properties,
+ * the browser resolves the value.
+ *
+ * Results are cached for the current frame to avoid repeated reflows.
+ */
+export const getSafeAreaInsets = (doc: Document): SafeAreaInsets => {
+  if (cachedInsets !== null) {
+    return cachedInsets;
+  }
+
+  if (doc.body === null) {
+    return { top: 0, bottom: 0, left: 0, right: 0 };
+  }
+
+  const el = doc.createElement('div');
+  el.style.cssText =
+    'position:fixed;visibility:hidden;pointer-events:none;top:0;left:0;' +
+    'padding-top:var(--ion-safe-area-top,0px);' +
+    'padding-bottom:var(--ion-safe-area-bottom,0px);' +
+    'padding-left:var(--ion-safe-area-left,0px);' +
+    'padding-right:var(--ion-safe-area-right,0px);';
+  doc.body.appendChild(el);
+  const style = getComputedStyle(el);
+  const insets = {
+    top: parseFloat(style.paddingTop) || 0,
+    bottom: parseFloat(style.paddingBottom) || 0,
+    left: parseFloat(style.paddingLeft) || 0,
+    right: parseFloat(style.paddingRight) || 0,
+  };
+  el.remove();
+
+  cachedInsets = insets;
+  if (!cacheInvalidationScheduled) {
+    cacheInvalidationScheduled = true;
+    raf(() => {
+      cachedInsets = null;
+      cacheInvalidationScheduled = false;
+    });
+  }
+
+  return insets;
+};
+
+/**
+ * Largest difference from 1 that the `offsetWidth` based zoom detection below
+ * attributes to integer rounding rather than to an actual CSS `zoom`. The
+ * rounding error is at most half a pixel over the width of the popover, which
+ * is well under this threshold for any realistic popover size.
+ */
+const ZOOM_ROUNDING_TOLERANCE = 0.01;
+
+/**
+ * Returns the cumulative CSS `zoom` factor applied to an element.
+ *
+ * When a CSS `zoom` other than 1 is set on an ancestor (e.g. the `html`
+ * element, as recommended by the docs for dynamic font scaling on Chrome for
+ * Android), `getBoundingClientRect()`, `clientX`/`clientY` and other geometry
+ * APIs report values in the *zoomed* (visual) coordinate space, while inline
+ * `top`/`left`/`--width` styles we set are interpreted in the *unzoomed*
+ * (layout) space and re-scaled by the browser. Dividing the rect-derived
+ * values by this factor converts them back to layout space so the popover is
+ * positioned and sized correctly. Returns 1 when no zoom is applied.
+ */
+export const getElementCSSZoom = (el: HTMLElement | null): number => {
+  if (!el) {
+    return 1;
+  }
+
+  /**
+   * `currentCSSZoom` exposes the exact effective zoom of an element
+   * (Chromium 128+). When available we use it directly.
+   */
+  const currentCSSZoom = el.currentCSSZoom;
+  if (typeof currentCSSZoom === 'number' && currentCSSZoom > 0) {
+    return currentCSSZoom;
+  }
+
+  /**
+   * Fallback for browsers without `currentCSSZoom`: compare the rendered
+   * (zoomed) width from `getBoundingClientRect()` against the layout width
+   * from `offsetWidth`, which is not affected by CSS `zoom`.
+   */
+  const { width } = el.getBoundingClientRect();
+  const { offsetWidth } = el;
+  if (offsetWidth > 0 && width > 0) {
+    const ratio = width / offsetWidth;
+    /**
+     * `offsetWidth` is rounded to an integer while the bounding rect is not,
+     * so the ratio is rarely exactly 1 even when no zoom is applied. Treat
+     * sub-pixel differences as "no zoom" so that unzoomed popovers are not
+     * shifted by the rounding error. A real zoom deviates far more, though
+     * the same rounding leaves the detected factor approximate.
+     */
+    return Math.abs(ratio - 1) < ZOOM_ROUNDING_TOLERANCE ? 1 : ratio;
+  }
+
+  return 1;
+};
 
 /**
  * Returns the dimensions of the popover
  * arrow on `ios` mode. If arrow is disabled
  * returns (0, 0).
  */
-export const getArrowDimensions = (arrowEl: HTMLElement | null) => {
+export const getArrowDimensions = (arrowEl: HTMLElement | null, zoom = 1) => {
   if (!arrowEl) {
     return { arrowWidth: 0, arrowHeight: 0 };
   }
   const { width, height } = arrowEl.getBoundingClientRect();
 
-  return { arrowWidth: width, arrowHeight: height };
+  return { arrowWidth: width / zoom, arrowHeight: height / zoom };
 };
 
 /**
@@ -56,14 +180,14 @@ export const getArrowDimensions = (arrowEl: HTMLElement | null) => {
  * that takes into account whether or not the width
  * should match the trigger width.
  */
-export const getPopoverDimensions = (size: PopoverSize, contentEl: HTMLElement, triggerEl?: HTMLElement) => {
+export const getPopoverDimensions = (size: PopoverSize, contentEl: HTMLElement, triggerEl?: HTMLElement, zoom = 1) => {
   const contentDimentions = contentEl.getBoundingClientRect();
-  const contentHeight = contentDimentions.height;
-  let contentWidth = contentDimentions.width;
+  const contentHeight = contentDimentions.height / zoom;
+  let contentWidth = contentDimentions.width / zoom;
 
   if (size === 'cover' && triggerEl) {
     const triggerDimensions = triggerEl.getBoundingClientRect();
-    contentWidth = triggerDimensions.width;
+    contentWidth = triggerDimensions.width / zoom;
   }
 
   return {
@@ -458,7 +582,8 @@ export const getPopoverPosition = (
   align: PositionAlign,
   defaultPosition: PopoverPosition,
   triggerEl?: HTMLElement,
-  event?: MouseEvent | CustomEvent
+  event?: MouseEvent | CustomEvent,
+  zoom = 1
 ): PopoverPosition => {
   let referenceCoordinates = {
     top: 0,
@@ -481,8 +606,8 @@ export const getPopoverPosition = (
       const mouseEv = event as MouseEvent;
 
       referenceCoordinates = {
-        top: mouseEv.clientY,
-        left: mouseEv.clientX,
+        top: mouseEv.clientY / zoom,
+        left: mouseEv.clientX / zoom,
         width: 1,
         height: 1,
       };
@@ -517,10 +642,10 @@ export const getPopoverPosition = (
       }
       const triggerBoundingBox = actualTriggerEl.getBoundingClientRect();
       referenceCoordinates = {
-        top: triggerBoundingBox.top,
-        left: triggerBoundingBox.left,
-        width: triggerBoundingBox.width,
-        height: triggerBoundingBox.height,
+        top: triggerBoundingBox.top / zoom,
+        left: triggerBoundingBox.left / zoom,
+        width: triggerBoundingBox.width / zoom,
+        height: triggerBoundingBox.height / zoom,
       };
 
       break;
@@ -804,6 +929,8 @@ const calculatePopoverCenterAlign = (
  * Adjusts popover positioning coordinates
  * such that popover does not appear offscreen
  * or overlapping safe area bounds.
+ *
+ * @internal - This is not part of the public API.
  */
 export const calculateWindowAdjustment = (
   side: PositionSide,
@@ -814,7 +941,7 @@ export const calculateWindowAdjustment = (
   bodyHeight: number,
   contentWidth: number,
   contentHeight: number,
-  safeAreaMargin: number,
+  safeArea: SafeAreaInsets,
   contentOriginX: string,
   contentOriginY: string,
   triggerCoordinates?: ReferenceCoordinates,
@@ -831,17 +958,20 @@ export const calculateWindowAdjustment = (
   let originY = contentOriginY;
   let checkSafeAreaLeft = false;
   let checkSafeAreaRight = false;
+  let checkSafeAreaTop = false;
+  let checkSafeAreaBottom = false;
   const triggerTop = triggerCoordinates
     ? triggerCoordinates.top + triggerCoordinates.height
     : bodyHeight / 2 - contentHeight / 2;
   const triggerHeight = triggerCoordinates ? triggerCoordinates.height : 0;
   let addPopoverBottomClass = false;
+  const hideArrow = false;
 
   /**
    * Adjust popover so it does not
    * go off the left of the screen.
    */
-  if (left < bodyPadding + safeAreaMargin) {
+  if (left < bodyPadding + safeArea.left) {
     left = bodyPadding;
     checkSafeAreaLeft = true;
     originX = 'left';
@@ -849,7 +979,7 @@ export const calculateWindowAdjustment = (
      * Adjust popover so it does not
      * go off the right of the screen.
      */
-  } else if (contentWidth + bodyPadding + left + safeAreaMargin > bodyWidth) {
+  } else if (contentWidth + bodyPadding + left + safeArea.right > bodyWidth) {
     checkSafeAreaRight = true;
     left = bodyWidth - contentWidth - bodyPadding;
     originX = 'right';
@@ -857,34 +987,54 @@ export const calculateWindowAdjustment = (
 
   /**
    * Adjust popover so it does not
-   * go off the top of the screen.
+   * go off the bottom of the screen
+   * or overlap the bottom safe area.
    * If popover is on the left or the right of
    * the trigger, then we should not adjust top
    * margins.
    */
-  if (triggerTop + triggerHeight + contentHeight > bodyHeight && (side === 'top' || side === 'bottom')) {
-    if (triggerTop - contentHeight > 0) {
+  if (
+    triggerTop + triggerHeight + contentHeight > bodyHeight - safeArea.bottom &&
+    (side === 'top' || side === 'bottom')
+  ) {
+    /**
+     * Calculate where the popover top would be if flipped
+     * above the trigger. Check whether that position clears
+     * the top safe area with room for bodyPadding.
+     */
+    const idealFlipTop = triggerTop - contentHeight - triggerHeight - (arrowHeight - 1);
+
+    if (idealFlipTop >= safeArea.top + bodyPadding) {
       /**
-       * While we strive to align the popover with the trigger
-       * on smaller screens this is not always possible. As a result,
-       * we adjust the popover up so that it does not hang
-       * off the bottom of the screen. However, we do not want to move
-       * the popover up so much that it goes off the top of the screen.
-       *
-       * We chose 12 here so that the popover position looks a bit nicer as
-       * it is not right up against the edge of the screen.
+       * Popover fits above the trigger without overlapping
+       * the top safe area. Use the ideal position directly —
+       * no safe-area CSS vars needed since it clears both edges.
        */
-      top = Math.max(12, triggerTop - contentHeight - triggerHeight - (arrowHeight - 1));
+      top = idealFlipTop;
       arrowTop = top + contentHeight;
       originY = 'bottom';
       addPopoverBottomClass = true;
+    } else {
+      /**
+       * Can't flip above the trigger. Constrain the bottom
+       * edge while keeping the top near the trigger. This
+       * creates a scrollable area anchored to the trigger.
+       */
+      bottom = bodyPadding;
+      checkSafeAreaBottom = true;
 
       /**
-       * If not enough room for popover to appear
-       * above trigger, then cut it off.
+       * When the trigger is near the bottom of the screen,
+       * the calculated top may be at or past the bottom
+       * constraint, leaving zero visible height. In that
+       * case, pull top up to the top safe area so the
+       * popover fills the available space between safe areas.
        */
-    } else {
-      bottom = bodyPadding;
+      const bottomEdge = bodyHeight - safeArea.bottom - bodyPadding;
+      if (top >= bottomEdge) {
+        top = safeArea.top + bodyPadding;
+        checkSafeAreaTop = true;
+      }
     }
   }
 
@@ -896,9 +1046,12 @@ export const calculateWindowAdjustment = (
     originY,
     checkSafeAreaLeft,
     checkSafeAreaRight,
+    checkSafeAreaTop,
+    checkSafeAreaBottom,
     arrowTop,
     arrowLeft,
     addPopoverBottomClass,
+    hideArrow,
   };
 };
 

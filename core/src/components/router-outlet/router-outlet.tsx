@@ -4,7 +4,8 @@ import { getTimeGivenProgression } from '@utils/animation/cubic-bezier';
 import { attachComponent, detachComponent } from '@utils/framework-delegate';
 import { shallowEqualStringMap, hasLazyBuild } from '@utils/helpers';
 import { createLockController } from '@utils/lock-controller';
-import { transition } from '@utils/transition';
+import { printIonError } from '@utils/logging';
+import { blockSwipeClicks, transition } from '@utils/transition';
 
 import { config } from '../../global/config';
 import { getIonMode } from '../../global/ionic-global';
@@ -32,6 +33,7 @@ export class RouterOutlet implements ComponentInterface, NavOutlet {
   private activeParams: any;
   private gesture?: Gesture;
   private ani?: Animation;
+  private unblockSwipeClicks?: () => void;
   private gestureOrAnimationInProgress = false;
 
   @Element() el!: HTMLElement;
@@ -52,13 +54,21 @@ export class RouterOutlet implements ComponentInterface, NavOutlet {
   /** This property allows to create custom transition using AnimationBuilder functions. */
   @Prop() animation?: AnimationBuilder;
 
+  /**
+   * If `true`, the router-outlet should allow navigation via swipe-to-go-back gesture.
+   * Defaults to `true` for `"ios"` mode and `false` for `"md"` mode.
+   */
+  @Prop({ mutable: true }) swipeGesture?: boolean;
+  @Watch('swipeGesture')
+  swipeGestureChanged() {
+    this.updateGestureEnabled();
+  }
+
   /** @internal */
   @Prop() swipeHandler?: SwipeGestureHandler;
   @Watch('swipeHandler')
   swipeHandlerChanged() {
-    if (this.gesture) {
-      this.gesture.enable(this.swipeHandler !== undefined);
-    }
+    this.updateGestureEnabled();
   }
 
   /** @internal */
@@ -73,6 +83,16 @@ export class RouterOutlet implements ComponentInterface, NavOutlet {
   async connectedCallback() {
     const onStart = () => {
       this.gestureOrAnimationInProgress = true;
+
+      /**
+       * Without animations there's nothing for the swipe to drive, so
+       * wait until the gesture ends to decide whether to go back.
+       */
+      if (!(this.animated && config.getBoolean('animated', true))) {
+        this.unblockSwipeClicks = blockSwipeClicks(this.el);
+        return;
+      }
+
       if (this.swipeHandler) {
         this.swipeHandler.onStart();
       }
@@ -116,21 +136,53 @@ export class RouterOutlet implements ComponentInterface, NavOutlet {
 
           this.ani.progressEnd(shouldComplete ? 1 : 0, newStepValue, dur);
         } else {
-          this.gestureOrAnimationInProgress = false;
+          const { swipeHandler, unblockSwipeClicks: unblock } = this;
+          this.unblockSwipeClicks = undefined;
+
+          // The stack can change during the swipe, so check that going back is still possible.
+          if (unblock && shouldComplete && swipeHandler?.canStart()) {
+            new Promise<void>((resolve) => resolve(swipeHandler.onStart()))
+              .then(() => swipeHandler.onEnd(true))
+              .finally(() => {
+                this.gestureOrAnimationInProgress = false;
+                unblock();
+              });
+          } else {
+            this.gestureOrAnimationInProgress = false;
+            unblock?.();
+          }
         }
       }
     );
-    this.swipeHandlerChanged();
+
+    if (this.swipeGesture === undefined) {
+      this.swipeGesture = config.getBoolean('swipeBackEnabled', this.mode === 'ios');
+    } else {
+      this.updateGestureEnabled();
+    }
   }
 
   componentWillLoad() {
     this.ionNavWillLoad.emit();
   }
 
+  private updateGestureEnabled() {
+    if (this.gesture) {
+      this.gesture.enable(this.swipeHandler !== undefined && this.swipeGesture === true);
+    }
+  }
+
   disconnectedCallback() {
     if (this.gesture) {
       this.gesture.destroy();
       this.gesture = undefined;
+    }
+
+    // Destroying the gesture skips onEnd, so end a deferred swipe here.
+    if (this.unblockSwipeClicks) {
+      this.unblockSwipeClicks();
+      this.unblockSwipeClicks = undefined;
+      this.gestureOrAnimationInProgress = false;
     }
   }
 
@@ -146,7 +198,7 @@ export class RouterOutlet implements ComponentInterface, NavOutlet {
     try {
       changed = await this.transition(enteringEl, leavingEl, opts);
     } catch (e) {
-      console.error(e);
+      printIonError('[ion-router-outlet] - Exception in commit:', e);
     }
     unlock();
     return changed;

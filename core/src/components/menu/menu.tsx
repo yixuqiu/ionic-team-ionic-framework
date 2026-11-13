@@ -3,18 +3,19 @@ import { Build, Component, Element, Event, Host, Listen, Method, Prop, State, Wa
 import { getTimeGivenProgression } from '@utils/animation/cubic-bezier';
 import { focusFirstDescendant, focusLastDescendant } from '@utils/focus-trap';
 import { GESTURE_CONTROLLER } from '@utils/gesture';
-import { shouldUseCloseWatcher } from '@utils/hardware-back-button';
+import { shouldUseCloseWatcher, updateCloseWatcher } from '@utils/hardware-back-button';
 import type { Attributes } from '@utils/helpers';
 import { inheritAriaAttributes, assert, clamp, isEndSide as isEnd } from '@utils/helpers';
+import { printIonError } from '@utils/logging';
 import { menuController } from '@utils/menu-controller';
-import { getPresentedOverlay } from '@utils/overlays';
-import { hostContext } from '@utils/theme';
+import { BACKDROP, GESTURE, getPresentedOverlay } from '@utils/overlays';
+import { isPlatform } from '@utils/platform';
 
 import { config } from '../../global/config';
 import { getIonMode } from '../../global/ionic-global';
 import type { Animation, Gesture, GestureDetail } from '../../interface';
 
-import type { MenuChangeEventDetail, MenuI, MenuType, Side } from './menu-interface';
+import type { MenuChangeEventDetail, MenuCloseEventDetail, MenuI, MenuType, Side } from './menu-interface';
 
 const iosEasing = 'cubic-bezier(0.32,0.72,0,1)';
 const mdEasing = 'cubic-bezier(0.0,0.0,0.2,1)';
@@ -148,7 +149,7 @@ export class Menu implements ComponentInterface, MenuI {
 
   @Watch('side')
   protected sideChanged() {
-    this.isEndSide = isEnd(this.side);
+    this.isEndSide = isEnd(this.side, this.el);
     /**
      * Menu direction animation is calculated based on the document direction.
      * If the document direction changes, we need to create a new animation.
@@ -179,7 +180,7 @@ export class Menu implements ComponentInterface, MenuI {
   /**
    * Emitted when the menu is about to be closed.
    */
-  @Event() ionWillClose!: EventEmitter<void>;
+  @Event() ionWillClose!: EventEmitter<MenuCloseEventDetail>;
   /**
    * Emitted when the menu is open.
    */
@@ -188,7 +189,7 @@ export class Menu implements ComponentInterface, MenuI {
   /**
    * Emitted when the menu is closed.
    */
-  @Event() ionDidClose!: EventEmitter<void>;
+  @Event() ionDidClose!: EventEmitter<MenuCloseEventDetail>;
 
   /**
    * Emitted when the menu state is changed.
@@ -214,13 +215,13 @@ export class Menu implements ComponentInterface, MenuI {
     const content = this.contentId !== undefined ? document.getElementById(this.contentId) : null;
 
     if (content === null) {
-      console.error('Menu: must have a "content" element to listen for drag events on.');
+      printIonError('[ion-menu] - Must have a "content" element to listen for drag events on.');
       return;
     }
 
     if (this.el.contains(content)) {
-      console.error(
-        `Menu: "contentId" should refer to the main view's ion-content, not the ion-content inside of the ion-menu.`
+      printIonError(
+        `[ion-menu] - The "contentId" should refer to the main view's ion-content, not the ion-content inside of the ion-menu.`
       );
     }
 
@@ -267,7 +268,7 @@ export class Menu implements ComponentInterface, MenuI {
      * of the split pane. If the split pane is
      * hidden then the menu should be too.
      */
-    const splitPane = this.el.closest('ion-split-pane');
+    const splitPane = this.getSplitPane();
     if (splitPane !== null) {
       this.isPaneVisible = await splitPane.isVisible();
     }
@@ -313,9 +314,9 @@ export class Menu implements ComponentInterface, MenuI {
 
   @Listen('ionSplitPaneVisible', { target: 'body' })
   onSplitPaneChanged(ev: CustomEvent<{ visible: boolean }>) {
-    const closestSplitPane = this.el.closest<HTMLIonSplitPaneElement>('ion-split-pane');
+    const splitPane = this.getSplitPane();
 
-    if (closestSplitPane !== null && closestSplitPane === ev.target) {
+    if (splitPane !== null && splitPane === ev.target) {
       this.isPaneVisible = ev.detail.visible;
 
       this.updateState();
@@ -331,14 +332,14 @@ export class Menu implements ComponentInterface, MenuI {
       if (shouldClose) {
         ev.preventDefault();
         ev.stopPropagation();
-        this.close();
+        this.close(undefined, BACKDROP);
       }
     }
   }
 
   onKeydown(ev: KeyboardEvent) {
     if (ev.key === 'Escape') {
-      this.close();
+      this.close(undefined, BACKDROP);
     }
   }
 
@@ -351,7 +352,7 @@ export class Menu implements ComponentInterface, MenuI {
   }
 
   /**
-   * Returns `true` is the menu is active.
+   * Returns `true` if the menu is active.
    *
    * A menu is active when it can be opened or closed, meaning it's enabled
    * and it's not part of a `ion-split-pane`.
@@ -364,6 +365,10 @@ export class Menu implements ComponentInterface, MenuI {
   /**
    * Opens the menu. If the menu is already open or it can't be opened,
    * it returns `false`.
+   *
+   * @param animated If `true`, the menu will animate when opening.
+   * If `false`, the menu will open instantly without animation.
+   * Defaults to `true`.
    */
   @Method()
   open(animated = true): Promise<boolean> {
@@ -373,15 +378,27 @@ export class Menu implements ComponentInterface, MenuI {
   /**
    * Closes the menu. If the menu is already closed or it can't be closed,
    * it returns `false`.
+   *
+   * @param animated If `true`, the menu will animate when closing. If `false`,
+   * the menu will close instantly without animation. Defaults to `true`.
+   * @param role The role of the element that is closing the menu.
+   * This can be useful in a button handler for determining which button was
+   * clicked to close the menu. Some examples include:
+   * `"cancel"`, `"destructive"`, `"selected"`, and `"backdrop"`.
    */
   @Method()
-  close(animated = true): Promise<boolean> {
-    return this.setOpen(false, animated);
+  close(animated = true, role?: string): Promise<boolean> {
+    return this.setOpen(false, animated, role);
   }
 
   /**
-   * Toggles the menu. If the menu is already open, it will try to close, otherwise it will try to open it.
+   * Toggles the menu. If the menu is already open, it will try to close,
+   * otherwise it will try to open it.
    * If the operation can't be completed successfully, it returns `false`.
+   *
+   * @param animated If `true`, the menu will animate when opening/closing.
+   * If `false`, the menu will open/close instantly without animation.
+   * Defaults to `true`.
    */
   @Method()
   toggle(animated = true): Promise<boolean> {
@@ -389,12 +406,21 @@ export class Menu implements ComponentInterface, MenuI {
   }
 
   /**
-   * Opens or closes the button.
+   * Opens or closes the menu.
    * If the operation can't be completed successfully, it returns `false`.
+   *
+   * @param shouldOpen If `true`, the menu will open. If `false`, the menu
+   * will close.
+   * @param animated If `true`, the menu will animate when opening/closing.
+   * If `false`, the menu will open/close instantly without animation.
+   * @param role The role of the element that is closing the menu.
    */
   @Method()
-  setOpen(shouldOpen: boolean, animated = true): Promise<boolean> {
-    return menuController._setOpen(this, shouldOpen, animated);
+  setOpen(shouldOpen: boolean, animated = true, role?: string): Promise<boolean> {
+    // Blur the active element to prevent it from being kept focused inside an element that will be set with aria-hidden="true"
+    (document.activeElement as HTMLElement)?.blur();
+
+    return menuController._setOpen(this, shouldOpen, animated, role);
   }
 
   private trapKeyboardFocus(ev: Event, doc: Document) {
@@ -438,13 +464,13 @@ export class Menu implements ComponentInterface, MenuI {
     }
   }
 
-  async _setOpen(shouldOpen: boolean, animated = true): Promise<boolean> {
+  async _setOpen(shouldOpen: boolean, animated = true, role?: string): Promise<boolean> {
     // If the menu is disabled or it is currently being animated, let's do nothing
     if (!this._isActive() || this.isAnimating || shouldOpen === this._isOpen) {
       return false;
     }
 
-    this.beforeAnimation(shouldOpen);
+    this.beforeAnimation(shouldOpen, role);
 
     await this.loadAnimation();
     await this.startAnimation(shouldOpen, animated);
@@ -459,7 +485,7 @@ export class Menu implements ComponentInterface, MenuI {
       return false;
     }
 
-    this.afterAnimation(shouldOpen);
+    this.afterAnimation(shouldOpen, role);
 
     return true;
   }
@@ -472,7 +498,7 @@ export class Menu implements ComponentInterface, MenuI {
      * Menu direction animation is calculated based on the document direction.
      * If the document direction changes, we need to create a new animation.
      */
-    const isEndSide = isEnd(this.side);
+    const isEndSide = isEnd(this.side, this.el);
     if (width === this.width && this.animation !== undefined && isEndSide === this.isEndSide) {
       return;
     }
@@ -523,6 +549,27 @@ export class Menu implements ComponentInterface, MenuI {
     return !this.disabled && !this.isPaneVisible;
   }
 
+  /**
+   * Returns the split pane this menu is a side pane of.
+   * A menu inside the split pane's main content, such as one
+   * in a page, is a regular menu. The menu doesn't need to be
+   * a direct child, since it can be wrapped in a component.
+   */
+  private getSplitPane(): HTMLIonSplitPaneElement | null {
+    const splitPane = this.el.closest('ion-split-pane');
+    const main = this.el.closest('.split-pane-main');
+
+    /**
+     * A split pane can be the main content of an outer split
+     * pane, so only this split pane's main content counts.
+     */
+    if (splitPane === null || (main !== null && main !== splitPane && splitPane.contains(main))) {
+      return null;
+    }
+
+    return splitPane;
+  }
+
   private canSwipe(): boolean {
     return this.swipeGesture && !this.isAnimating && this._isActive();
   }
@@ -542,7 +589,7 @@ export class Menu implements ComponentInterface, MenuI {
   }
 
   private onWillStart(): Promise<void> {
-    this.beforeAnimation(!this._isOpen);
+    this.beforeAnimation(!this._isOpen, GESTURE);
     return this.loadAnimation();
   }
 
@@ -624,12 +671,29 @@ export class Menu implements ComponentInterface, MenuI {
 
     this.animation
       .easing('cubic-bezier(0.4, 0.0, 0.6, 1)')
-      .onFinish(() => this.afterAnimation(shouldOpen), { oneTimeCallback: true })
+      .onFinish(() => this.afterAnimation(shouldOpen, GESTURE), { oneTimeCallback: true })
       .progressEnd(playTo ? 1 : 0, this._isOpen ? 1 - newStepValue : newStepValue, 300);
   }
 
-  private beforeAnimation(shouldOpen: boolean) {
+  private beforeAnimation(shouldOpen: boolean, role?: string) {
     assert(!this.isAnimating, '_before() should not be called while animating');
+
+    /**
+     * When the menu is presented on an Android device, TalkBack's focus rings
+     * may appear in the wrong position due to the transition (specifically
+     * `transform` styles). This occurs because the focus rings are initially
+     * displayed at the starting position of the elements before the transition
+     * begins. This workaround ensures the focus rings do not appear in the
+     * incorrect location.
+     *
+     * If this solution is applied to iOS devices, then it leads to a bug where
+     * the overlays cannot be accessed by screen readers. This is due to
+     * VoiceOver not being able to update the accessibility tree when the
+     * `aria-hidden` is removed.
+     */
+    if (isPlatform('android')) {
+      this.el.setAttribute('aria-hidden', 'true');
+    }
 
     // this places the menu into the correct location before it animates in
     // this css class doesn't actually kick off any animations
@@ -671,22 +735,34 @@ export class Menu implements ComponentInterface, MenuI {
     if (shouldOpen) {
       this.ionWillOpen.emit();
     } else {
-      this.ionWillClose.emit();
+      this.ionWillClose.emit({ role });
     }
   }
 
-  private afterAnimation(isOpen: boolean) {
+  private afterAnimation(isOpen: boolean, role?: string) {
     // keep opening/closing the menu disabled for a touch more yet
     // only add listeners/css if it's enabled and isOpen
     // and only remove listeners/css if it's not open
     // emit opened/closed events
     this._isOpen = isOpen;
     this.isAnimating = false;
+    updateCloseWatcher();
     if (!this._isOpen) {
       this.blocker.unblock();
     }
 
     if (isOpen) {
+      /**
+       * When the menu is presented on an Android device, TalkBack's focus rings
+       * may appear in the wrong position due to the transition (specifically
+       * `transform` styles). The menu is hidden from screen readers during the
+       * transition to prevent this. Once the transition is complete, the menu
+       * is shown again.
+       */
+      if (isPlatform('android')) {
+        this.el.removeAttribute('aria-hidden');
+      }
+
       // emit open event
       this.ionDidOpen.emit();
 
@@ -703,6 +779,8 @@ export class Menu implements ComponentInterface, MenuI {
       // start focus trapping
       document.addEventListener('focus', this.handleFocus, true);
     } else {
+      this.el.removeAttribute('aria-hidden');
+
       // remove css classes and unhide content from screen readers
       this.el.classList.remove(SHOW_MENU);
 
@@ -731,7 +809,7 @@ export class Menu implements ComponentInterface, MenuI {
       }
 
       // emit close event
-      this.ionDidClose.emit();
+      this.ionDidClose.emit({ role });
 
       // undo focus trapping so multiple menus don't collide
       document.removeEventListener('focus', this.handleFocus, true);
@@ -767,12 +845,12 @@ export class Menu implements ComponentInterface, MenuI {
        * If the menu is disabled then we should
        * forcibly close the menu even if it is open.
        */
-      this.afterAnimation(false);
+      this.afterAnimation(false, GESTURE);
     }
   }
 
   render() {
-    const { type, disabled, el, isPaneVisible, inheritedAttributes, side } = this;
+    const { type, disabled, isPaneVisible, inheritedAttributes, side } = this;
     const mode = getIonMode(this);
 
     /**
@@ -791,7 +869,7 @@ export class Menu implements ComponentInterface, MenuI {
           'menu-enabled': !disabled,
           [`menu-side-${side}`]: true,
           'menu-pane-visible': isPaneVisible,
-          'split-pane-side': hostContext('ion-split-pane', el),
+          'split-pane-side': this.getSplitPane() !== null,
         }}
       >
         <div class="menu-inner" part="container" ref={(el) => (this.menuInnerEl = el)}>

@@ -17,30 +17,38 @@ const createEnterAnimation = () => {
 
   const wrapperAnimation = createAnimation().fromTo('transform', 'translateY(100vh)', 'translateY(0vh)');
 
-  return { backdropAnimation, wrapperAnimation };
+  return { backdropAnimation, wrapperAnimation, contentAnimation: undefined };
 };
 
 /**
  * iOS Modal Enter Animation for the Card presentation style
  */
 export const iosEnterAnimation = (baseEl: HTMLElement, opts: ModalAnimationOptions): Animation => {
-  const { presentingEl, currentBreakpoint } = opts;
+  const { presentingEl, currentBreakpoint, expandToScroll } = opts;
   const root = getElementRoot(baseEl);
-  const { wrapperAnimation, backdropAnimation } =
+  const { wrapperAnimation, backdropAnimation, contentAnimation } =
     currentBreakpoint !== undefined ? createSheetEnterAnimation(opts) : createEnterAnimation();
 
   backdropAnimation.addElement(root.querySelector('ion-backdrop')!);
 
   wrapperAnimation.addElement(root.querySelectorAll('.modal-wrapper, .modal-shadow')!).beforeStyles({ opacity: 1 });
 
+  // The content animation is only added if scrolling is enabled for
+  // all the breakpoints.
+  !expandToScroll && contentAnimation?.addElement(baseEl.querySelector('.ion-page')!);
+
   const baseAnimation = createAnimation('entering-base')
     .addElement(baseEl)
     .easing('cubic-bezier(0.32,0.72,0,1)')
     .duration(500)
-    .addAnimation(wrapperAnimation);
+    .addAnimation([wrapperAnimation]);
+
+  if (contentAnimation) {
+    baseAnimation.addAnimation(contentAnimation);
+  }
 
   if (presentingEl) {
-    const isMobile = window.innerWidth < 768;
+    const isPortrait = window.innerWidth < 768;
     const hasCardModal =
       presentingEl.tagName === 'ION-MODAL' && (presentingEl as HTMLIonModalElement).presentingElement !== undefined;
     const presentingElRoot = getElementRoot(presentingEl);
@@ -53,7 +61,7 @@ export const iosEnterAnimation = (baseEl: HTMLElement, opts: ModalAnimationOptio
 
     const bodyEl = document.body;
 
-    if (isMobile) {
+    if (isPortrait) {
       /**
        * Fallback for browsers that does not support `max()` (ex: Firefox)
        * No need to worry about statusbar padding since engines like Gecko

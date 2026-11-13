@@ -21,6 +21,11 @@
         --height: 50%;
       }
 
+      /* Kept below half the viewport so the drag tests catch sheets dismissing on upward drags. */
+      .short-sheet {
+        --height: 40%;
+      }
+
       .custom-handle::part(handle) {
         top: -16px;
         background: rgba(255, 255, 255, 0.53);
@@ -101,6 +106,18 @@
             Present Sheet Modal (Max breakpoint is not 1)
           </button>
           <button
+            id="scroll-at-edge-modal"
+            onclick="presentModal({ initialBreakpoint: 0.5, breakpoints: [0, 0.25, 0.5, 0.75, 1], expandToScroll: false })"
+          >
+            Present Sheet Modal (Scroll at any breakpoint)
+          </button>
+          <button
+            id="cycle-scroll-no-backdrop"
+            onclick="presentModal({ handleBehavior: 'cycle', backdropBreakpoint: 1, backdropDismiss: false, initialBreakpoint: 0.5, breakpoints: [0, 0.25, 0.5, 0.75, 1], expandToScroll: false })"
+          >
+            Present Sheet Modal (Cycle Handle, Scroll at any breakpoint)
+          </button>
+          <button
             id="custom-backdrop-modal"
             onclick="presentModal({ backdropBreakpoint: 0.5, initialBreakpoint: 0.5 })"
           >
@@ -116,10 +133,22 @@
             Present Sheet Modal (Custom Height)
           </button>
           <button
+            id="short-sheet"
+            onclick="presentModal({ cssClass: 'short-sheet', initialBreakpoint: 1, breakpoints: [0, 1] })"
+          >
+            Present Sheet Modal (40% Height, Breakpoints 0 and 1)
+          </button>
+          <button
             id="handle-behavior-cycle-modal"
             onclick="presentModal({ handleBehavior: 'cycle', initialBreakpoint: 0.25, breakpoints: [0, 0.25, 0.5, 0.75, 1] })"
           >
             Present Sheet Modal (HandleBehavior: Cycle)
+          </button>
+          <button
+            id="handle-behavior-none-modal"
+            onclick="presentModal({ handleBehavior: 'none', initialBreakpoint: 0.25, breakpoints: [0, 0.25, 0.5, 0.75, 1] })"
+          >
+            Present Sheet Modal (HandleBehavior: None)
           </button>
           <button id="custom-handle-modal" onclick="presentModal({ cssClass: 'custom-handle' })">
             Present Sheet Modal (Custom Handle)
@@ -140,6 +169,8 @@
             Backdrop is inactive
           </button>
 
+          <button id="drag-events" onclick="dragEvents()">Drag Events</button>
+
           <div class="grid">
             <div class="grid-item red"></div>
             <div class="grid-item green"></div>
@@ -154,6 +185,13 @@
       </div>
     </ion-app>
     <script>
+      window.addEventListener('ionModalDidDismiss', function (e) {
+        console.log('DidDismiss', e);
+      });
+      window.addEventListener('ionModalWillDismiss', function (e) {
+        console.log('WillDismiss', e);
+      });
+
       function createModal(options) {
         let items = '';
 
@@ -177,6 +215,11 @@
           ${items}
         </ion-list>
       </ion-content>
+      <ion-footer>
+        <ion-toolbar>
+          <ion-title>Footer</ion-title>
+        </ion-toolbar>
+      </ion-footer>
       `;
 
         let extraOptions = {
@@ -202,6 +245,7 @@
         button.addEventListener('click', () => {
           modalElement.dismiss();
         });
+
         document.body.appendChild(modalElement);
         return modalElement;
       }
@@ -220,6 +264,27 @@
           presentingElement: presentingEl,
         });
         await modal.present();
+      }
+
+      function dragEvents() {
+        const modal = createModal({
+          initialBreakpoint: 0.5,
+          breakpoints: [0, 0.25, 0.5, 0.75, 1],
+        });
+
+        modal.addEventListener('ionDragStart', (event) => {
+          console.log('Drag started');
+        });
+
+        modal.addEventListener('ionDragMove', (event) => {
+          console.log('Drag moved', event.detail);
+        });
+
+        modal.addEventListener('ionDragEnd', (event) => {
+          console.log('Drag ended', event.detail);
+        });
+
+        modal.present();
       }
     </script>
   </body>

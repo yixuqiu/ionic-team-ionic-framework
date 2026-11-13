@@ -1,9 +1,10 @@
 import { Component, VERSION } from '@angular/core';
-import { AnimationBuilder, AnimationController } from '@ionic/angular';
+import { AnimationBuilder, AnimationController } from '@ionic/angular/lazy';
 
 @Component({
-  selector: 'app-home-page',
-  templateUrl: './home-page.component.html',
+    selector: 'app-home-page',
+    templateUrl: './home-page.component.html',
+    standalone: false
 })
 export class HomePageComponent {
 

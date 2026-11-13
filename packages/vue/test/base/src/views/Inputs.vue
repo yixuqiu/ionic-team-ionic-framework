@@ -2,13 +2,13 @@
   <ion-page data-pageid="inputs">
     <ion-header :translucent="true">
       <ion-toolbar>
-        <ion-buttons>
-          <ion-back-button></ion-back-button>
+        <ion-buttons slot="start">
+          <ion-back-button default-href="/"></ion-back-button>
         </ion-buttons>
         <ion-title>Inputs</ion-title>
       </ion-toolbar>
       <ion-toolbar>
-        <ion-segment v-model="segment">
+        <ion-segment v-model="segment" :disabled="isDisabled">
           <ion-segment-button value="dogs">
             <ion-label>Dogs</ion-label>
           </ion-segment-button>
@@ -18,7 +18,7 @@
         </ion-segment>
       </ion-toolbar>
       <ion-toolbar>
-        <ion-searchbar v-model="searchbar"></ion-searchbar>
+        <ion-searchbar v-model="searchbar" :disabled="isDisabled"></ion-searchbar>
       </ion-toolbar>
     </ion-header>
 
@@ -30,44 +30,48 @@
       </ion-header>
 
       <ion-item>
-        <ion-checkbox v-model="checkbox">Checkbox</ion-checkbox>
+        <ion-checkbox v-model="checkbox" :disabled="isDisabled">Checkbox</ion-checkbox>
       </ion-item>
 
       <ion-item>
-        <ion-toggle v-model="toggle">Toggle</ion-toggle>
+        <ion-toggle v-model="toggle" :disabled="isDisabled">Toggle</ion-toggle>
       </ion-item>
 
       <ion-item>
-        <ion-input v-model="input" label="Input"></ion-input>
+        <ion-input v-model="input" label="Input" :disabled="isDisabled" :readonly="isReadonly"></ion-input>
       </ion-item>
 
       <ion-item>
-        <ion-range label="Range" :dual-knobs="true" :min="0" :max="100" slot="end" v-model="range"></ion-range>
+        <ion-input-otp v-model="inputOtp" :disabled="isDisabled" :readonly="isReadonly"></ion-input-otp>
       </ion-item>
 
       <ion-item>
-        <ion-textarea label="Textarea" v-model="textarea"></ion-textarea>
+        <ion-range label="Range" :dual-knobs="true" :min="0" :max="100" slot="end" v-model="range" :disabled="isDisabled"></ion-range>
+      </ion-item>
+
+      <ion-item>
+        <ion-textarea label="Textarea" v-model="textarea" :disabled="isDisabled" :readonly="isReadonly"></ion-textarea>
       </ion-item>
 
       <ion-item>
         <ion-label>Datetime</ion-label>
-        <ion-datetime v-model="datetime"></ion-datetime>
+        <ion-datetime v-model="datetime" :disabled="isDisabled" :readonly="isReadonly"></ion-datetime>
       </ion-item>
 
       <ion-radio-group v-model="radio">
         <ion-item>
-          <ion-radio value="red">Red</ion-radio>
+          <ion-radio value="red" :disabled="isDisabled">Red</ion-radio>
         </ion-item>
         <ion-item>
-          <ion-radio value="green">Green</ion-radio>
+          <ion-radio value="green" :disabled="isDisabled">Green</ion-radio>
         </ion-item>
         <ion-item>
-          <ion-radio value="blue">Blue</ion-radio>
+          <ion-radio value="blue" :disabled="isDisabled">Blue</ion-radio>
         </ion-item>
       </ion-radio-group>
 
       <ion-item>
-        <ion-select v-model="select" label="Select">
+        <ion-select v-model="select" label="Select" :disabled="isDisabled">
           <ion-select-option value="apples">Apples</ion-select-option>
           <ion-select-option value="bananas">Bananas</ion-select-option>
         </ion-select>
@@ -77,6 +81,7 @@
         Checkbox: {{ checkbox }}<br>
         Toggle: {{ toggle }}<br>
         Input: <span id="input-ref">{{ input }}</span><br>
+        Input OTP: <span id="input-otp-ref">{{ inputOtp }}</span><br>
         Range: {{ range }}<br>
         Textarea: <span id="textarea-ref">{{ textarea }}</span><br>
         Searchbar: <span id="searchbar-ref">{{ searchbar }}</span><br>
@@ -89,6 +94,8 @@
 
         <ion-button expand="block" @click="reset" id="reset">Reset Values</ion-button>
         <ion-button expand="block" @click="set" id="set">Set Values</ion-button>
+        <ion-button expand="block" @click="toggleDisable" id="disable">Toggle Disabled</ion-button>
+        <ion-button expand="block" @click="toggleReadonly" id="readonly">Toggle Readonly</ion-button>
       </div>
     </ion-content>
   </ion-page>
@@ -104,6 +111,7 @@ import {
   IonDatetime,
   IonHeader,
   IonInput,
+  IonInputOtp,
   IonItem,
   IonLabel,
   IonPage,
@@ -132,6 +140,7 @@ export default defineComponent({
     IonDatetime,
     IonHeader,
     IonInput,
+    IonInputOtp,
     IonItem,
     IonLabel,
     IonPage,
@@ -152,6 +161,7 @@ export default defineComponent({
     const checkbox = ref(false);
     const toggle = ref(false);
     const input = ref('');
+    const inputOtp = ref('');
     const range = ref({
       lower: 30,
       upper: 70
@@ -163,10 +173,15 @@ export default defineComponent({
     const segment = ref('dogs');
     const select = ref('apples');
 
+    // States
+    const isDisabled = ref(false);
+    const isReadonly = ref(false);
+
     const reset = () => {
       checkbox.value = false;
       toggle.value = false;
       input.value = '';
+      inputOtp.value = '';
       range.value = {
         lower: 30,
         upper: 70
@@ -183,6 +198,7 @@ export default defineComponent({
       checkbox.value = true;
       toggle.value = true;
       input.value = 'Hello World';
+      inputOtp.value = '1234';
       range.value = {
         lower: 10,
         upper: 90
@@ -195,10 +211,19 @@ export default defineComponent({
       select.value = 'bananas';
     }
 
+    const toggleDisable = () => {
+      isDisabled.value = !isDisabled.value;
+    };
+
+    const toggleReadonly = () => {
+      isReadonly.value = !isReadonly.value;
+    };
+
     return {
       checkbox,
       toggle,
       input,
+      inputOtp,
       range,
       textarea,
       searchbar,
@@ -206,9 +231,13 @@ export default defineComponent({
       radio,
       segment,
       select,
+      isDisabled,
+      isReadonly,
 
       reset,
-      set
+      set,
+      toggleDisable,
+      toggleReadonly
     }
   }
 });

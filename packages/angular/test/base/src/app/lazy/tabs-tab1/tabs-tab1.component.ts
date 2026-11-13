@@ -1,22 +1,27 @@
-import { Component, NgZone } from '@angular/core';
-import { NavController } from '@ionic/angular';
+import { ChangeDetectorRef, Component } from '@angular/core';
+import { NavController } from '@ionic/angular/lazy';
+
+import { assertZoneContext } from '../../zone-assert.util';
 
 @Component({
   selector: 'app-tabs-tab1',
   templateUrl: './tabs-tab1.component.html',
+  standalone: false
 })
 export class TabsTab1Component {
   title = 'ERROR';
   segment = 'one';
   changed = 'false';
 
-  constructor(public navCtrl: NavController) {}
+  constructor(public navCtrl: NavController, private cdr: ChangeDetectorRef) {}
 
   ionViewWillEnter() {
-    NgZone.assertInAngularZone();
+    assertZoneContext();
     setTimeout(() => {
-      NgZone.assertInAngularZone();
+      assertZoneContext();
       this.title = 'Tab 1 - Page 1';
+      // Zoneless: state set in an async callback Angular does not wrap won't re-render on its own; mark the view dirty.
+      this.cdr.markForCheck();
     });
   }
 

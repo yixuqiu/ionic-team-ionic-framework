@@ -2,7 +2,6 @@ import type { KeyboardResizeOptions } from '@capacitor/keyboard';
 import { win } from '@utils/browser';
 
 import { getScrollElement, scrollByPoint } from '../../content';
-import { raf } from '../../helpers';
 import { KeyboardResize } from '../../native/keyboard';
 
 import { relocateInput, SCROLL_AMOUNT_PADDING } from './common';
@@ -181,6 +180,30 @@ const setManualFocus = (el: HTMLElement) => {
     return;
   }
 
+  /**
+   * Optimization for scenarios where the currently focused element is a sibling
+   * of the target element. In such cases, we avoid setting `SKIP_SCROLL_ASSIST`.
+   *
+   * This is crucial for accessibility: input elements can now contain focusable
+   * siblings (e.g., clear buttons, slotted elements). If we didn't skip setting
+   * the attribute here, screen readers would be unable to navigate to and interact
+   * with these sibling elements.
+   *
+   * Without this check, we would need to call `ev.stopPropagation()` on the
+   * 'focusin' event of each focusable sibling to prevent the scroll assist
+   * listener from incorrectly moving focus back to the input. That approach
+   * would be less maintainable and more error-prone.
+   */
+  const inputId = el.getAttribute('id');
+  const label = el.closest(`label[for="${inputId}"]`);
+  const activeElLabel = document.activeElement?.closest(`label[for="${inputId}"]`);
+
+  if (label !== null && label === activeElLabel) {
+    // If the label is the same as the active element label, then
+    // we don't need to set the `SKIP_SCROLL_ASSIST` and reset focus.
+    return;
+  }
+
   el.setAttribute(SKIP_SCROLL_ASSIST, 'true');
   el.focus();
 };
@@ -230,13 +253,6 @@ const jsSetFocus = async (
   setManualFocus(inputEl);
 
   /**
-   * Relocating/Focusing input causes the
-   * click event to be cancelled, so
-   * manually fire one here.
-   */
-  raf(() => componentEl.click());
-
-  /**
    * If enabled, we can add scroll padding to
    * the bottom of the content so that scroll assist
    * has enough room to scroll the input above
@@ -267,8 +283,14 @@ const jsSetFocus = async (
       // give the native text input focus
       relocateInput(componentEl, inputEl, false, scrollData.inputSafeY);
 
-      // ensure this is the focused input
-      setManualFocus(inputEl);
+      /**
+       * If focus has moved to another element while scroll assist was running,
+       * don't steal focus back. This prevents focus jumping when users
+       * quickly switch between inputs or tap other elements.
+       */
+      if (document.activeElement === inputEl) {
+        setManualFocus(inputEl);
+      }
 
       /**
        * When the input is about to be blurred

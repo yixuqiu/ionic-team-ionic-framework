@@ -14,10 +14,21 @@
   * [Switch](#switch)
   * [Accordion](#accordion)
 - [Rendering Anchor or Button](#rendering-anchor-or-button)
-  * [Example Components](#example-components-1)
+  * [Example Components](#example-components-4)
   * [Component Structure](#component-structure-1)
 - [Converting Scoped to Shadow](#converting-scoped-to-shadow)
+- [Sass Variables](#sass-variables)
+- [CSS Shadow Parts](#css-shadow-parts)
+- [Icon Styling](#icon-styling)
 - [RTL](#rtl)
+- [Adding New Components with Native Input Support](#adding-new-components-with-native-input-support)
+  * [Angular Integration](#angular-integration)
+  * [Angular Tests](#angular-tests)
+  * [Vue Integration](#vue-integration)
+  * [Vue Tests](#vue-tests)
+  * [React Integration](#react-integration)
+  * [React Tests](#react-tests)
+  * [Interface Exports](#interface-exports)
 
 ## Button States
 
@@ -384,9 +395,9 @@ ion-ripple-effect {
 
 ### Example Components
 
-- [ion-button](https://github.com/ionic-team/ionic/tree/main/core/src/components/button)
-- [ion-back-button](https://github.com/ionic-team/ionic/tree/main/core/src/components/back-button)
-- [ion-menu-button](https://github.com/ionic-team/ionic/tree/main/core/src/components/menu-button)
+- [ion-button](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/button)
+- [ion-back-button](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/back-button)
+- [ion-menu-button](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/menu-button)
 
 ### References
 
@@ -400,7 +411,7 @@ ion-ripple-effect {
 
 #### Example Components
 
-- [ion-checkbox](https://github.com/ionic-team/ionic/tree/main/core/src/components/checkbox)
+- [ion-checkbox](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/checkbox)
 
 #### VoiceOver
 
@@ -454,24 +465,43 @@ render() {
 
 Labels should be passed directly to the component in the form of either visible text or an `aria-label`. The visible text can be set inside of a `label` element, and the `aria-label` can be set directly on the interactive element.
 
-In the following example the `aria-label` can be inherited from the Host using the `inheritAttributes` or `inheritAriaAttributes` utilities. This allows developers to set `aria-label` on the host element since they do not have access to inside the shadow root.
+In the following example the `aria-label` is copied from the Host using `createAttributeController`. This allows developers to set `aria-label` on the host element since they do not have access to inside the shadow root.
 
 > [!NOTE]
-> Use `inheritAttributes` to specify which attributes should be inherited or `inheritAriaAttributes` to inherit all of the possible `aria` attributes.
+> Use `createAttributeController` to specify which attributes should be copied or `createAriaAttributeController` to copy all of the possible `aria` attributes.
+
+The controller keeps the copy in sync when the host attribute changes after load. Both `inheritAttributes` and `inheritAriaAttributes` do the same copy but only once, so a change made after load never reaches the native element. Those are still the right choice for an attribute that is only read at load. An `aria-label`, `aria-description` or `role` written after load is replaced on the host with an empty string, so the host doesn't show up as a second node in the accessibility tree and a later removal still reaches the native element. Anything else written after load stays on the host as written.
+
+> [!IMPORTANT]
+> Pass `hostOwnedAttributes` for any attribute that should be copied at load but not watched afterwards, like the `aria-disabled` that `ion-button` renders on its `<Host>` from its `disabled` prop. Watching it would let the component's own renders overwrite a developer's value.
+>
+> Pass `keepOnHost` to `createAttributeController` when the component sometimes renders no element that can carry the copy, like `ion-card` without `href` or `button`, or the generic `div` of a non-clickable `ion-item`, which ARIA doesn't allow a name on. While it returns `true`, a value written after load stays on the host as written. Call the controller's `refresh()` when something it reads changes, so the value moves to match.
+
+> [!NOTE]
+> Attributes that reference an element by ID (`aria-labelledby`, `aria-describedby`, `aria-controls`, `aria-owns`, `aria-activedescendant`) cannot resolve a light DOM ID from inside the shadow root, so only copy those when the target is in the same tree.
 
 ```tsx
-import { Prop } from '@stencil/core';
-import { inheritAttributes } from '@utils/helpers';
-import type { Attributes } from '@utils/helpers';
+import { Prop, forceUpdate } from '@stencil/core';
+import { createAttributeController } from '@utils/attribute-controller';
+import type { AttributeController } from '@utils/attribute-controller';
 
 ...
 
-private inheritedAttributes: Attributes = {};
+private ariaController?: AttributeController;
 
 @Prop() labelText?: string;
 
 componentWillLoad() {
-  this.inheritedAttributes = inheritAttributes(this.el, ['aria-label']);
+  this.ariaController = createAttributeController(this.el, ['aria-label'], () => forceUpdate(this));
+}
+
+connectedCallback() {
+  // componentWillLoad does not run again when the host is moved.
+  this.ariaController?.init();
+}
+
+disconnectedCallback() {
+  this.ariaController?.destroy();
 }
 
 render() {
@@ -479,7 +509,7 @@ render() {
     <Host>
       <label>
         {this.labelText}
-        <input type="checkbox" {...this.inheritedAttributes} /> 
+        <input type="checkbox" {...(this.ariaController?.attributes ?? {})} />
       </label>
     </Host>
   )
@@ -511,7 +541,7 @@ This is a compromise we have to make in order for it to work with the other scre
 
 #### Example Components
 
-- [ion-toggle](https://github.com/ionic-team/ionic/tree/main/core/src/components/toggle)
+- [ion-toggle](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/toggle)
 
 #### Voiceover
 
@@ -567,24 +597,43 @@ render() {
 
 Labels should be passed directly to the component in the form of either visible text or an `aria-label`. The visible text can be set inside of a `label` element, and the `aria-label` can be set directly on the interactive element.
 
-In the following example the `aria-label` can be inherited from the Host using the `inheritAttributes` or `inheritAriaAttributes` utilities. This allows developers to set `aria-label` on the host element since they do not have access to inside the shadow root.
+In the following example the `aria-label` is copied from the Host using `createAttributeController`. This allows developers to set `aria-label` on the host element since they do not have access to inside the shadow root.
 
 > [!NOTE]
-> Use `inheritAttributes` to specify which attributes should be inherited or `inheritAriaAttributes` to inherit all of the possible `aria` attributes.
+> Use `createAttributeController` to specify which attributes should be copied or `createAriaAttributeController` to copy all of the possible `aria` attributes.
+
+The controller keeps the copy in sync when the host attribute changes after load. Both `inheritAttributes` and `inheritAriaAttributes` do the same copy but only once, so a change made after load never reaches the native element. Those are still the right choice for an attribute that is only read at load. An `aria-label`, `aria-description` or `role` written after load is replaced on the host with an empty string, so the host doesn't show up as a second node in the accessibility tree and a later removal still reaches the native element. Anything else written after load stays on the host as written.
+
+> [!IMPORTANT]
+> Pass `hostOwnedAttributes` for any attribute that should be copied at load but not watched afterwards, like the `aria-disabled` that `ion-button` renders on its `<Host>` from its `disabled` prop. Watching it would let the component's own renders overwrite a developer's value.
+>
+> Pass `keepOnHost` to `createAttributeController` when the component sometimes renders no element that can carry the copy, like `ion-card` without `href` or `button`, or the generic `div` of a non-clickable `ion-item`, which ARIA doesn't allow a name on. While it returns `true`, a value written after load stays on the host as written. Call the controller's `refresh()` when something it reads changes, so the value moves to match.
+
+> [!NOTE]
+> Attributes that reference an element by ID (`aria-labelledby`, `aria-describedby`, `aria-controls`, `aria-owns`, `aria-activedescendant`) cannot resolve a light DOM ID from inside the shadow root, so only copy those when the target is in the same tree.
 
 ```tsx
-import { Prop } from '@stencil/core';
-import { inheritAttributes } from '@utils/helpers';
-import type { Attributes } from '@utils/helpers';
+import { Prop, forceUpdate } from '@stencil/core';
+import { createAttributeController } from '@utils/attribute-controller';
+import type { AttributeController } from '@utils/attribute-controller';
 
 ...
 
-private inheritedAttributes: Attributes = {};
+private ariaController?: AttributeController;
 
 @Prop() labelText?: string;
 
 componentWillLoad() {
-  this.inheritedAttributes = inheritAttributes(this.el, ['aria-label']);
+  this.ariaController = createAttributeController(this.el, ['aria-label'], () => forceUpdate(this));
+}
+
+connectedCallback() {
+  // componentWillLoad does not run again when the host is moved.
+  this.ariaController?.init();
+}
+
+disconnectedCallback() {
+  this.ariaController?.destroy();
 }
 
 render() {
@@ -592,7 +641,7 @@ render() {
     <Host>
       <label>
         {this.labelText}
-        <input type="checkbox" role="switch" {...this.inheritedAttributes} /> 
+        <input type="checkbox" role="switch" {...(this.ariaController?.attributes ?? {})} />
       </label>
     </Host>
   )
@@ -624,8 +673,8 @@ There is a WebKit bug open for this: https://bugs.webkit.org/show_bug.cgi?id=196
 
 #### Example Components
 
-- [ion-accordion](https://github.com/ionic-team/ionic/tree/master/core/src/components/accordion)
-- [ion-accordion-group](https://github.com/ionic-team/ionic/tree/master/core/src/components/accordion-group)
+- [ion-accordion](https://github.com/ionic-team/ionic-framework/tree/master/core/src/components/accordion)
+- [ion-accordion-group](https://github.com/ionic-team/ionic-framework/tree/master/core/src/components/accordion-group)
 
 #### NVDA
 
@@ -640,11 +689,11 @@ Certain components can render an `<a>` or a `<button>` depending on the presence
 
 ### Example Components
 
-- [ion-button](https://github.com/ionic-team/ionic/tree/main/core/src/components/button)
-- [ion-card](https://github.com/ionic-team/ionic/tree/main/core/src/components/card)
-- [ion-fab-button](https://github.com/ionic-team/ionic/tree/main/core/src/components/fab-button)
-- [ion-item-option](https://github.com/ionic-team/ionic/tree/main/core/src/components/item-option)
-- [ion-item](https://github.com/ionic-team/ionic/tree/main/core/src/components/item)
+- [ion-button](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/button)
+- [ion-card](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/card)
+- [ion-fab-button](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/fab-button)
+- [ion-item-option](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/item-option)
+- [ion-item](https://github.com/ionic-team/ionic-framework/tree/main/core/src/components/item)
 
 ### Component Structure
 
@@ -714,6 +763,36 @@ There will be some CSS issues when converting to shadow. Below are some of the d
 :host-context(ion-toolbar:not(.ion-color)):host(:not(.ion-color)) ::slotted(ion-segment-button) {
 ```
 
+## Sass Variables
+
+For guidelines on when to use Sass Variables, see the [Sass Guidelines](./sass-guidelines.md).
+
+## CSS Shadow Parts
+
+For guidelines on adding CSS shadow parts, see the [CSS Shadow Parts Guidelines](./shadow-parts-guidelines.md).
+
+## Icon Styling
+
+When sizing `<ion-icon>` elements, use `font-size` instead of `width` and `height` properties. `<ion-icon>` now supports both SVG icons and font-based icons (web fonts), and font icons only respond to `font-size`, not `width` and `height`.
+
+✅ **Correct**
+
+```scss
+::slotted(ion-icon) {
+  font-size: 24px;
+}
+```
+
+❌ **Incorrect**
+
+```scss
+// Don't do this
+::slotted(ion-icon) {
+  width: 24px;
+  height: 24px;
+}
+```
+
 ## RTL
 
 When you need to support both LTR and RTL modes, try to avoid using values such as `left` and `right`. For certain CSS properties, you can use the appropriate mixin to have this handled for you automatically.
@@ -731,9 +810,11 @@ These mixins depend on the `:host-context` pseudo-class when used inside of shad
 To work around this, you should set an RTL class on the host of your component and set your RTL styles by targeting that class:
 
 ```tsx
+import { isRTL } from '@utils/rtl';
+
 <Host
 class={{
-  'my-cmp-rtl': document.dir === 'rtl'
+  'my-cmp-rtl': isRTL(this.el)
 }}
 >
  ...
@@ -748,4 +829,213 @@ class={{
 :host(.my-cmp-rtl) {
   transform-origin: right center;
 }
+```
+
+## Adding New Components with Native Input Support
+
+When creating a new component that renders native input elements (such as `<input>` or `<textarea>`), there are several steps required to ensure proper form integration across all frameworks (Angular, React, and Vue).
+
+### Angular Integration
+
+#### Value Accessors
+
+For Angular integration, you should use one of the existing value accessors based on your component's needs. Choose the one that most closely matches your component's behavior:
+
+- For text input (handles string values): Use [`TextValueAccessorDirective`](/packages/angular/src/lazy/directives/control-value-accessors/text-value-accessor.ts) which handles `ion-input:not([type=number])`, `ion-input-otp[type=text]`, `ion-textarea`, and `ion-searchbar`
+- For numeric input (converts string to number): Use [`NumericValueAccessorDirective`](/packages/angular/src/lazy/directives/control-value-accessors/numeric-value-accessor.ts) which handles `ion-input[type=number]`, `ion-input-otp:not([type=text])`, and `ion-range`
+- For boolean input (handles true/false): Use [`BooleanValueAccessorDirective`](/packages/angular/src/lazy/directives/control-value-accessors/boolean-value-accessor.ts) which handles `ion-checkbox` and `ion-toggle`
+- For select-like input (handles option selection): Use [`SelectValueAccessorDirective`](/packages/angular/src/lazy/directives/control-value-accessors/select-value-accessor.ts) which handles `ion-select`, `ion-radio-group`, `ion-segment`, and `ion-datetime`
+
+These value accessors are already set up in the `@ionic/angular` package and handle all the necessary form integration. You don't need to create a new value accessor unless your component has unique requirements that aren't covered by these existing ones.
+
+For example, if your component renders a text input, it should be included in the `TextValueAccessorDirective` selector in [`text-value-accessor.ts`](/packages/angular/src/lazy/directives/control-value-accessors/text-value-accessor.ts):
+
+```diff
+@Directive({
+-  selector: 'ion-input:not([type=number]),ion-input-otp[type=text],ion-textarea,ion-searchbar',
++  selector: 'ion-input:not([type=number]),ion-input-otp[type=text],ion-textarea,ion-searchbar,ion-new-component',
+  providers: [
+    {
+      provide: NG_VALUE_ACCESSOR,
+      useExisting: TextValueAccessorDirective,
+      multi: true,
+    },
+  ],
+})
+```
+
+You'll also need to add your component's type to the value accessor's type definitions. For example, in the `TextValueAccessorDirective`, you would add your component's type to the `_handleInputEvent` method:
+
+```diff
+@HostListener('ionInput', ['$event.target'])
+_handleInputEvent(
+-  el: HTMLIonInputElement | HTMLIonInputOtpElement | HTMLIonTextareaElement | HTMLIonSearchbarElement
++  el: HTMLIonInputElement | HTMLIonInputOtpElement | HTMLIonTextareaElement | HTMLIonSearchbarElement | HTMLIonNewComponentElement
+): void {
+  this.handleValueChange(el, el.value);
+}
+```
+
+If your component needs special handling for value changes, you'll also need to update the `registerOnChange` method. For example, if your component needs to handle numeric values:
+
+```diff
+registerOnChange(fn: (_: number | null) => void): void {
+-  if (this.el.nativeElement.tagName === 'ION-INPUT' || this.el.nativeElement.tagName === 'ION-INPUT-OTP') {
++  if (this.el.nativeElement.tagName === 'ION-INPUT' || this.el.nativeElement.tagName === 'ION-INPUT-OTP' || this.el.nativeElement.tagName === 'ION-NEW-COMPONENT') {
+    super.registerOnChange((value: string) => {
+      fn(value === '' ? null : parseFloat(value));
+    });
+  } else {
+    super.registerOnChange(fn);
+  }
+}
+```
+
+#### Standalone Directive
+
+For standalone components, create a directive in the [standalone package](/packages/angular/src/standalone/directives). Look at the implementation of the most similar existing component as a reference:
+
+- For text/numeric inputs: See [ion-input](/packages/angular/src/standalone/directives/input.ts) or [ion-input-otp](/packages/angular/src/standalone/directives/input-otp.ts)
+- For boolean inputs: See [ion-checkbox](/packages/angular/src/standalone/directives/checkbox.ts) or [ion-toggle](/packages/angular/src/standalone/directives/toggle.ts)
+- For select-like inputs: See [ion-select](/packages/angular/src/standalone/directives/select.ts) or [ion-radio-group](/packages/angular/src/standalone/directives/radio-group.ts)
+
+After creating the directive, you need to export it in two places:
+
+1. First, add your component to the directives export group in [`packages/angular/src/standalone/directives/index.ts`](/packages/angular/src/standalone/directives/index.ts):
+
+```typescript
+export { IonNewComponent } from './new-component';
+```
+
+2. Then, add it to the main standalone package's index file in [`packages/angular/src/standalone/index.ts`](/packages/angular/src/standalone/index.ts):
+
+```typescript
+export {
+  IonCheckbox,
+  IonDatetime,
+  IonInput,
+  IonInputOtp,
+  IonNewComponent, // Add your new component here
+  // ... other components
+} from './directives';
+```
+
+This ensures your component is properly exported and available for use in standalone Angular applications.
+
+#### Output Target Configuration
+
+Update the `angularOutputTarget` configuration in [`stencil.config.ts`](/core/stencil.config.ts) to exclude your new component from the generated proxies. This is necessary because value accessors for these components are manually implemented in the standalone package.
+
+```typescript
+angularOutputTarget({
+  // ... other config
+  excludeComponents: [
+    ...excludeComponents,
+    // ... other excludes
+    /**
+     * Value Accessors are manually implemented in the `@ionic/angular/standalone` package.
+     */
+    'ion-new-component'
+  ]
+})
+```
+
+### Angular Tests
+
+Add tests for the new component to the existing Angular test files:
+
+- **(Lazy) Inputs**
+  - [`inputs.component.html`](/packages/angular/test/base/src/app/lazy/inputs/inputs.component.html)
+  - [`inputs.component.ts`](/packages/angular/test/base/src/app/lazy/inputs/inputs.component.ts)
+  - [`inputs.spec.ts`](/packages/angular/test/base/e2e/src/lazy/inputs.spec.ts)
+- **(Lazy) Form**
+  - [`form.component.html`](/packages/angular/test/base/src/app/lazy/form/form.component.html)
+  - [`form.component.ts`](/packages/angular/test/base/src/app/lazy/form/form.component.ts)
+  - [`form.spec.ts`](/packages/angular/test/base/e2e/src/lazy/form.spec.ts)
+- **(Standalone) Value Accessors**
+  - [`value-accessors/`](/packages/angular/test/base/src/app/standalone/value-accessors)
+  - [`value-accessors.spec.ts`](/packages/angular/test/base/e2e/src/standalone/value-accessors.spec.ts)
+
+These files contain tests for form integration and input behavior. Review how similar components are tested and add the new component to the relevant test files.
+
+### Vue Integration
+
+#### Output Target Configuration
+
+Update the `vueOutputTarget` configuration in [`stencil.config.ts`](/core/stencil.config.ts):
+
+- Add your new component to the appropriate `componentModels` array, based on its behavior:
+  - For boolean inputs, add to the array with `targetAttr: 'checked'` and `event: 'ion-change'`
+  - For select-like inputs, add to the array with `targetAttr: 'value'` and `event: 'ion-change'`
+  - For text/numeric inputs, add to the array with `targetAttr: 'value'` and `event: 'ion-input'`
+
+For example, if your component is a text input, add it to:
+```js
+vueOutputTarget({
+  // ... other config
+  componentModels: [
+    // ... other models
+    {
+      elements: ['ion-input', 'ion-input-otp', 'ion-searchbar', 'ion-textarea', 'ion-range', 'ion-new-component'],
+      targetAttr: 'value',
+      event: 'ion-input',
+    }
+  ],
+}),
+```
+
+Look at similar components in the `componentModels` arrays to determine the correct placement.
+
+### Vue Tests
+
+- **Inputs**
+  - [`Inputs.vue`](/packages/vue/test/base/src/views/Inputs.vue)
+  - [`inputs.cy.js`](/packages/vue/test/base/tests/e2e/specs/inputs.cy.js)
+
+These files contain tests for input behavior. Review how similar components are tested and add the new component to the relevant test files.
+
+### React Integration
+
+React components are automatically generated from the core component definitions. No additional configuration is needed.
+
+### React Tests
+
+- **Inputs**
+  - [`Inputs.tsx`](/packages/react/test/base/src/pages/Inputs.tsx)
+  - [`inputs.cy.ts`](/packages/react/test/base/tests/e2e/specs/components/inputs.cy.ts)
+
+These files contain tests for input behavior. Review how similar components are tested and add the new component to the relevant test files.
+
+### Interface Exports
+
+Add your component's interfaces to the framework packages:
+
+1. Angular ([`packages/angular/src/lazy/index.ts`](/packages/angular/src/lazy/index.ts) and [`packages/angular/src/standalone/index.ts`](/packages/angular/src/standalone/index.ts), which exports these from `@ionic/core/components` instead):
+```typescript
+export {
+  NewComponentCustomEvent,
+  NewComponentChangeEventDetail,
+  NewComponentInputEventDetail,
+  // ... other event interfaces
+} from '@ionic/core';
+```
+
+2. React ([`packages/react/src/components/index.ts`](/packages/react/src/components/index.ts)):
+```typescript
+export {
+  NewComponentCustomEvent,
+  NewComponentChangeEventDetail,
+  NewComponentInputEventDetail,
+  // ... other event interfaces
+} from '@ionic/core/components';
+```
+
+3. Vue ([`packages/vue/src/index.ts`](/packages/vue/src/index.ts)):
+```typescript
+export {
+  NewComponentCustomEvent,
+  NewComponentChangeEventDetail,
+  NewComponentInputEventDetail,
+  // ... other event interfaces
+} from '@ionic/core/components';
 ```

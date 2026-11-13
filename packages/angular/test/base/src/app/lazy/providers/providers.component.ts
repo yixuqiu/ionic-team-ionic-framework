@@ -1,4 +1,4 @@
-import { Component, NgZone } from '@angular/core';
+import { ChangeDetectorRef, Component, NgZone } from '@angular/core';
 import {
   Platform,
   ModalController,
@@ -6,17 +6,19 @@ import {
   ActionSheetController,
   PopoverController,
   ToastController,
-  PickerController,
   MenuController,
   LoadingController,
   NavController,
   DomController,
   Config,
-} from '@ionic/angular';
+} from '@ionic/angular/lazy';
+
+import { assertZoneContext } from '../../zone-assert.util';
 
 @Component({
-  selector: 'app-providers',
-  templateUrl: './providers.component.html',
+    selector: 'app-providers',
+    templateUrl: './providers.component.html',
+    standalone: false
 })
 export class ProvidersComponent {
   isLoaded = false;
@@ -24,6 +26,7 @@ export class ProvidersComponent {
   isResumed = false;
   isPaused = false;
   isResized = false;
+  resizeCount = 0;
   isTesting?: boolean = undefined;
   isDesktop?: boolean = undefined;
   isMobile?: boolean = undefined;
@@ -36,7 +39,6 @@ export class ProvidersComponent {
     private alertCtrl: AlertController,
     private loadingCtrl: LoadingController,
     private menuCtrl: MenuController,
-    private pickerCtrl: PickerController,
     modalCtrl: ModalController,
     platform: Platform,
     popoverCtrl: PopoverController,
@@ -44,7 +46,8 @@ export class ProvidersComponent {
     navCtrl: NavController,
     domCtrl: DomController,
     config: Config,
-    zone: NgZone
+    zone: NgZone,
+    private cdr: ChangeDetectorRef
   ) {
     // test all providers load
     if (
@@ -52,7 +55,6 @@ export class ProvidersComponent {
       alertCtrl &&
       loadingCtrl &&
       menuCtrl &&
-      pickerCtrl &&
       modalCtrl &&
       platform &&
       popoverCtrl &&
@@ -66,27 +68,36 @@ export class ProvidersComponent {
 
     // test platform ready()
     platform.ready().then(() => {
-      NgZone.assertInAngularZone();
+      assertZoneContext();
       this.isReady = true;
+      // Zoneless: state set in an async callback Angular does not wrap won't re-render on its own, so mark the view dirty.
+      this.cdr.markForCheck();
     });
     platform.resume.subscribe(() => {
       console.log('platform:resume');
-      NgZone.assertInAngularZone();
+      assertZoneContext();
       this.isResumed = true;
+      // Zoneless: state set in an async callback Angular does not wrap won't re-render on its own, so mark the view dirty.
+      this.cdr.markForCheck();
     });
     platform.pause.subscribe(() => {
       console.log('platform:pause');
-      NgZone.assertInAngularZone();
+      assertZoneContext();
       this.isPaused = true;
+      // Zoneless: state set in an async callback Angular does not wrap won't re-render on its own, so mark the view dirty.
+      this.cdr.markForCheck();
     });
     platform.resize.subscribe(() => {
       console.log('platform:resize');
-      NgZone.assertInAngularZone();
+      assertZoneContext();
       this.isResized = true;
+      this.resizeCount++;
+      // Zoneless: state set in an async callback Angular does not wrap won't re-render on its own, so mark the view dirty.
+      this.cdr.markForCheck();
     });
     const firstQuery = platform.getQueryParam('firstParam');
     const secondQuery = platform.getQueryParam('secondParam');
-    this.queryParams = `firstParam: ${firstQuery}, firstParam: ${secondQuery}`;
+    this.queryParams = `firstParam: ${firstQuery}, secondParam: ${secondQuery}`;
 
     this.isDesktop = platform.is('desktop');
     this.isMobile = platform.is('mobile');
@@ -105,6 +116,8 @@ export class ProvidersComponent {
   async setMenuCount() {
     const menus = await this.menuCtrl.getMenus();
     this.registeredMenuCount = menus.length;
+    // Zoneless: state set in an async callback Angular does not wrap won't re-render on its own; mark the view dirty.
+    this.cdr.markForCheck();
   }
 
   async openActionSheet() {
@@ -136,19 +149,5 @@ export class ProvidersComponent {
     });
 
     await loading.present();
-  }
-
-  async openPicker() {
-    const picker = await this.pickerCtrl.create({
-      columns: [],
-      buttons: [
-        {
-          text: 'Cancel',
-          role: 'cancel',
-        },
-      ],
-    });
-
-    await picker.present();
   }
 }

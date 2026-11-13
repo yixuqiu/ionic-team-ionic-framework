@@ -1,20 +1,22 @@
-import { Component } from '@angular/core';
+import { Component, Input, OnInit } from '@angular/core';
 import { ModalExampleComponent } from '../modal-example/modal-example.component';
-import { NavParams } from '@ionic/angular';
 
 @Component({
-  selector: 'app-nav',
-  templateUrl: './nav.component.html',
+    selector: 'app-nav',
+    templateUrl: './nav.component.html',
+    standalone: false
 })
-export class NavComponent {
+export class NavComponent implements OnInit {
   rootPage = ModalExampleComponent;
   rootParams: any;
 
-  constructor(
-    params: NavParams
-  ) {
+  @Input() value?: string;
+  @Input() prop?: string;
+
+  ngOnInit() {
     this.rootParams = {
-      ...params.data
+      value: this.value,
+      prop: this.prop
     };
   }
 }

@@ -1,4 +1,39 @@
-import { inheritAriaAttributes } from './helpers';
+import { inheritAriaAttributes, isEndSide } from './helpers';
+
+describe('isEndSide', () => {
+  afterEach(() => {
+    document.dir = '';
+    document.body.innerHTML = '';
+  });
+
+  // https://github.com/ionic-team/ionic-framework/issues/30226
+  it('should use the nearest ancestor dir attribute', () => {
+    document.dir = 'ltr';
+
+    const app = document.createElement('ion-app');
+    app.setAttribute('dir', 'rtl');
+
+    const menu = document.createElement('ion-menu');
+    app.appendChild(menu);
+    document.body.appendChild(app);
+
+    expect(isEndSide('start', menu)).toBe(true);
+    expect(isEndSide('end', menu)).toBe(false);
+  });
+
+  it('should fall back to the document dir when no ancestor declares one', () => {
+    const menu = document.createElement('ion-menu');
+    document.body.appendChild(menu);
+
+    document.dir = 'ltr';
+    expect(isEndSide('start', menu)).toBe(false);
+    expect(isEndSide('end', menu)).toBe(true);
+
+    document.dir = 'rtl';
+    expect(isEndSide('start', menu)).toBe(true);
+    expect(isEndSide('end', menu)).toBe(false);
+  });
+});
 
 describe('inheritAriaAttributes', () => {
   it('should inherit aria attributes', () => {

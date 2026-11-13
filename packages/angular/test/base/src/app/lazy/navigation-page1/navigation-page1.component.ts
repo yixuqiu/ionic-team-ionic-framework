@@ -1,10 +1,11 @@
 import { Component } from '@angular/core';
-import { NavController } from '@ionic/angular';
+import { NavController } from '@ionic/angular/lazy';
 
 let count = 0;
 @Component({
   selector: 'app-navigation-page1',
   templateUrl: './navigation-page1.component.html',
+  standalone: false
 })
 export class NavigationPage1Component {
   constructor(

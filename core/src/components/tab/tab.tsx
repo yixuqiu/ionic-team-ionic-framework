@@ -1,6 +1,7 @@
 import type { ComponentInterface } from '@stencil/core';
 import { Build, Component, Element, Host, Method, Prop, Watch, h } from '@stencil/core';
 import { attachComponent } from '@utils/framework-delegate';
+import { printIonError } from '@utils/logging';
 
 import type { ComponentRef, FrameworkDelegate } from '../../interface';
 
@@ -10,7 +11,8 @@ import type { ComponentRef, FrameworkDelegate } from '../../interface';
   shadow: true,
 })
 export class Tab implements ComponentInterface {
-  private loaded = false;
+  private loadPromise?: Promise<HTMLElement | undefined>;
+
   @Element() el!: HTMLIonTabElement;
 
   /** @internal */
@@ -33,8 +35,8 @@ export class Tab implements ComponentInterface {
   async componentWillLoad() {
     if (Build.isDev) {
       if (this.component !== undefined && this.el.childElementCount > 0) {
-        console.error(
-          'You can not use a lazy-loaded component in a tab and inlined content at the same time.' +
+        printIonError(
+          '[ion-tab] - You can not use a lazy-loaded component in a tab and inlined content at the same time.' +
             `- Remove the component attribute in: <ion-tab component="${this.component}">` +
             ` or` +
             `- Remove the embedded content inside the ion-tab: <ion-tab></ion-tab>`
@@ -56,20 +58,31 @@ export class Tab implements ComponentInterface {
   @Watch('active')
   changeActive(isActive: boolean) {
     if (isActive) {
-      this.prepareLazyLoaded();
+      this.prepareLazyLoaded().catch((e) => {
+        printIonError('[ion-tab] - Exception in prepareLazyLoaded:', e);
+      });
     }
   }
 
   private prepareLazyLoaded(): Promise<HTMLElement | undefined> {
-    if (!this.loaded && this.component != null) {
-      this.loaded = true;
-      try {
-        return attachComponent(this.delegate, this.el, this.component, ['ion-page']);
-      } catch (e) {
-        console.error(e);
-      }
+    if (this.component == null) {
+      return Promise.resolve(undefined);
     }
-    return Promise.resolve(undefined);
+
+    /**
+     * The attach is cached so that concurrent activations share a single
+     * attempt and later activations reuse the result. The cache is cleared
+     * only when the attach fails, so a tab whose component failed to load
+     * can be retried the next time it is activated.
+     */
+    if (this.loadPromise === undefined) {
+      this.loadPromise = attachComponent(this.delegate, this.el, this.component, ['ion-page']).catch((e) => {
+        this.loadPromise = undefined;
+        throw e;
+      });
+    }
+
+    return this.loadPromise;
   }
 
   render() {

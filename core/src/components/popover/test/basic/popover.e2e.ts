@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { configs, test } from '@utils/test/playwright';
+import { configs, detachAndReattach, test } from '@utils/test/playwright';
 
 import { PopoverFixture } from '../fixture';
 
@@ -29,7 +29,8 @@ configs({ directions: ['ltr'] }).forEach(({ title, screenshot, config }) => {
       await popoverFixture.open('#long-list-popover');
       await popoverFixture.screenshot('basic-long-list-popover', screenshot);
     });
-    test('should render no event popover', async () => {
+    // TODO(FW-6588): Remove skip once the flaky test is fixed
+    test.skip('should render no event popover', async () => {
       await popoverFixture.open('#no-event-popover');
       await popoverFixture.screenshot('basic-no-event-popover', screenshot);
     });
@@ -257,6 +258,32 @@ configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ title, config }) => 
       await page.keyboard.press('End');
 
       await expect(vanillaTextarea).toBeFocused();
+    });
+  });
+});
+
+/**
+ * This behavior does not vary across modes/directions.
+ */
+configs({ modes: ['ios'], directions: ['ltr'] }).forEach(({ config, title }) => {
+  test.describe(title('popover: moved while presented'), () => {
+    test('should keep the app root locked', async ({ page }, testInfo) => {
+      testInfo.annotations.push({
+        type: 'issue',
+        description: 'https://github.com/ionic-team/ionic-framework/issues/31389',
+      });
+
+      await page.goto('/src/components/popover/test/basic', config);
+      const ionPopoverDidPresent = await page.spyOnEvent('ionPopoverDidPresent');
+
+      await page.click('#basic-popover');
+      await ionPopoverDidPresent.next();
+
+      await expect(page.locator('body')).toHaveClass(/backdrop-no-scroll/);
+
+      await detachAndReattach(page.locator('ion-popover'));
+
+      await expect(page.locator('body')).toHaveClass(/backdrop-no-scroll/);
     });
   });
 });

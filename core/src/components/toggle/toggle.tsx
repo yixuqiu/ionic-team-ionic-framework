@@ -1,8 +1,10 @@
 import type { ComponentInterface, EventEmitter } from '@stencil/core';
-import { Component, Element, Event, Host, Prop, State, Watch, h } from '@stencil/core';
+import { Build, Component, Element, Event, Host, Prop, State, Watch, forceUpdate, h } from '@stencil/core';
+import { checkInvalidState, createItemMultipleInputsObserver } from '@utils/forms';
 import { renderHiddenInput, inheritAriaAttributes } from '@utils/helpers';
 import type { Attributes } from '@utils/helpers';
 import { hapticSelection } from '@utils/native/haptic';
+import { isPlatform } from '@utils/platform';
 import { isRTL } from '@utils/rtl';
 import { createColorClasses, hostContext } from '@utils/theme';
 import { checkmarkOutline, removeOutline, ellipseOutline } from 'ionicons/icons';
@@ -21,6 +23,9 @@ import type { ToggleChangeEventDetail } from './toggle-interface';
  * @part track - The background track of the toggle.
  * @part handle - The toggle handle, or knob, used to change the checked state.
  * @part label - The label text describing the toggle.
+ * @part supporting-text - Supporting text displayed beneath the toggle label.
+ * @part helper-text - Supporting text displayed beneath the toggle label when the toggle is valid.
+ * @part error-text - Supporting text displayed beneath the toggle label when the toggle is invalid and touched.
  */
 @Component({
   tag: 'ion-toggle',
@@ -32,16 +37,27 @@ import type { ToggleChangeEventDetail } from './toggle-interface';
 })
 export class Toggle implements ComponentInterface {
   private inputId = `ion-tg-${toggleIds++}`;
+  private inputLabelId = `${this.inputId}-lbl`;
+  private helperTextId = `${this.inputId}-helper-text`;
+  private errorTextId = `${this.inputId}-error-text`;
   private gesture?: Gesture;
-  private focusEl?: HTMLElement;
   private lastDrag = 0;
   private inheritedAttributes: Attributes = {};
   private toggleTrack?: HTMLElement;
   private didLoad = false;
+  private validationObserver?: MutationObserver;
+  private itemFocusObserver?: MutationObserver;
 
   @Element() el!: HTMLIonToggleElement;
 
   @State() activated = false;
+
+  /**
+   * Track validation state for proper aria-live announcements.
+   */
+  @State() isInvalid = false;
+
+  @State() private hintTextId?: string;
 
   /**
    * The color to use from your application's color palette.
@@ -64,6 +80,16 @@ export class Toggle implements ComponentInterface {
    * If `true`, the user cannot interact with the toggle.
    */
   @Prop() disabled = false;
+
+  /**
+   * Text that is placed under the toggle label and displayed when an error is detected.
+   */
+  @Prop() errorText?: string;
+
+  /**
+   * Text that is placed under the toggle label and displayed when no error is detected.
+   */
+  @Prop() helperText?: string;
 
   /**
    * The value of the toggle does not mean if it's checked or not, use the `checked`
@@ -96,15 +122,24 @@ export class Toggle implements ComponentInterface {
    * on the left in RTL.
    * `"space-between"`: The label and toggle will appear on opposite
    * ends of the line with space between the two elements.
+   * Setting this property will change the toggle `display` to `block`.
    */
-  @Prop() justify: 'start' | 'end' | 'space-between' = 'space-between';
+  @Prop() justify?: 'start' | 'end' | 'space-between';
 
   /**
    * How to control the alignment of the toggle and label on the cross axis.
    * `"start"`: The label and control will appear on the left of the cross axis in LTR, and on the right side in RTL.
    * `"center"`: The label and control will appear at the center of the cross axis in both LTR and RTL.
+   * Setting this property will change the toggle `display` to `block`.
    */
-  @Prop() alignment: 'start' | 'center' = 'center';
+  @Prop() alignment?: 'start' | 'center';
+
+  /**
+   * If true, screen readers will announce it as a required field. This property
+   * works only for accessibility purposes, it will not prevent the form from
+   * submitting if the value is invalid.
+   */
+  @Prop() required = false;
 
   /**
    * Emitted when the user switches the toggle on or off.
@@ -143,15 +178,61 @@ export class Toggle implements ComponentInterface {
   }
 
   async connectedCallback() {
+    const { didLoad, el } = this;
+
     /**
      * If we have not yet rendered
      * ion-toggle, then toggleTrack is not defined.
      * But if we are moving ion-toggle via appendChild,
      * then toggleTrack will be defined.
      */
-    if (this.didLoad) {
+    if (didLoad) {
       this.setupGesture();
     }
+
+    // Watch for class changes to update validation state.
+    if (Build.isBrowser && typeof MutationObserver !== 'undefined') {
+      this.validationObserver = new MutationObserver(() => {
+        const newIsInvalid = checkInvalidState(el);
+        if (this.isInvalid !== newIsInvalid) {
+          this.isInvalid = newIsInvalid;
+          /**
+           * Screen readers tend to announce changes
+           * to `aria-describedby` when the attribute
+           * is changed during a blur event for a
+           * native form control.
+           * However, the announcement can be spotty
+           * when using a non-native form control
+           * and `forceUpdate()`.
+           * This is due to `forceUpdate()` internally
+           * rescheduling the DOM update to a lower
+           * priority queue regardless if it's called
+           * inside a Promise or not, thus causing
+           * the screen reader to potentially miss the
+           * change.
+           * By using a State variable inside a Promise,
+           * it guarantees a re-render immediately at
+           * a higher priority.
+           */
+          Promise.resolve().then(() => {
+            this.hintTextId = this.getHintTextId();
+          });
+        }
+      });
+
+      this.validationObserver.observe(el, {
+        attributes: true,
+        attributeFilter: ['class'],
+      });
+    }
+
+    // Always set initial state
+    this.isInvalid = checkInvalidState(el);
+
+    this.itemFocusObserver = createItemMultipleInputsObserver(el, () => forceUpdate(this), [
+      'item-multiple-inputs',
+      'ion-activatable',
+    ]);
   }
 
   componentDidLoad() {
@@ -182,12 +263,25 @@ export class Toggle implements ComponentInterface {
       this.gesture.destroy();
       this.gesture = undefined;
     }
+
+    if (this.itemFocusObserver) {
+      this.itemFocusObserver.disconnect();
+      this.itemFocusObserver = undefined;
+    }
+
+    // Clean up validation observer to prevent memory leaks.
+    if (this.validationObserver) {
+      this.validationObserver.disconnect();
+      this.validationObserver = undefined;
+    }
   }
 
   componentWillLoad() {
     this.inheritedAttributes = {
       ...inheritAriaAttributes(this.el),
     };
+
+    this.hintTextId = this.getHintTextId();
   }
 
   private onStart() {
@@ -216,12 +310,26 @@ export class Toggle implements ComponentInterface {
   }
 
   private setFocus() {
-    if (this.focusEl) {
-      this.focusEl.focus();
-    }
+    this.el.focus();
   }
 
+  private onKeyDown = (ev: KeyboardEvent) => {
+    if (ev.key === ' ') {
+      ev.preventDefault();
+      if (!this.disabled) {
+        this.toggleChecked();
+      }
+    }
+  };
+
   private onClick = (ev: MouseEvent) => {
+    /**
+     * The haptics for the toggle on tap is
+     * an iOS-only feature. As such, it should
+     * only trigger on iOS.
+     */
+    const enableHaptics = isPlatform('ios');
+
     if (this.disabled) {
       return;
     }
@@ -230,7 +338,16 @@ export class Toggle implements ComponentInterface {
 
     if (this.lastDrag + 300 < Date.now()) {
       this.toggleChecked();
+      enableHaptics && hapticSelection();
     }
+  };
+
+  /**
+   * Stops propagation when the display label is clicked,
+   * otherwise, two clicks will be triggered.
+   */
+  private onDivLabelClick = (ev: MouseEvent) => {
+    ev.stopPropagation();
   };
 
   private onFocus = () => {
@@ -287,30 +404,109 @@ export class Toggle implements ComponentInterface {
     return this.el.textContent !== '';
   }
 
+  private getHintTextId(): string | undefined {
+    const { helperText, errorText, helperTextId, errorTextId, isInvalid } = this;
+
+    if (isInvalid && errorText) {
+      return errorTextId;
+    }
+
+    if (helperText) {
+      return helperTextId;
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Responsible for rendering helper text and error text.
+   * This element should only be rendered if hint text is set.
+   */
+  private renderHintText() {
+    const { helperText, errorText, helperTextId, errorTextId, isInvalid } = this;
+
+    /**
+     * undefined and empty string values should
+     * be treated as not having helper/error text.
+     */
+    const hasHintText = !!helperText || !!errorText;
+    if (!hasHintText) {
+      return;
+    }
+
+    return (
+      <div class="toggle-bottom">
+        <div id={helperTextId} class="helper-text" part="supporting-text helper-text" aria-live="polite">
+          {!isInvalid ? helperText : null}
+        </div>
+        <div id={errorTextId} class="error-text" part="supporting-text error-text" role="alert">
+          {isInvalid ? errorText : null}
+        </div>
+      </div>
+    );
+  }
+
   render() {
-    const { activated, color, checked, disabled, el, justify, labelPlacement, inputId, name, alignment } = this;
+    const {
+      activated,
+      alignment,
+      checked,
+      color,
+      disabled,
+      el,
+      hasLabel,
+      inheritedAttributes,
+      inputId,
+      inputLabelId,
+      justify,
+      labelPlacement,
+      name,
+      required,
+    } = this;
 
     const mode = getIonMode(this);
     const value = this.getValue();
     const rtl = isRTL(el) ? 'rtl' : 'ltr';
+    const inItem = hostContext('ion-item', el);
+    const inMultipleInputsItem = hostContext('ion-item.item-multiple-inputs', el);
+    // A clickable item is a second tab stop painting the same row indicator, which
+    // `item-multiple-inputs` misses because it counts cover elements, not toggles.
+    // The attributes are matched too because the class needs the item to render.
+    const inClickableItem = hostContext('ion-item.ion-activatable, ion-item[button], ion-item[href]', el);
     renderHiddenInput(true, el, name, checked ? value : '', disabled);
 
     return (
       <Host
+        role="switch"
+        aria-checked={`${checked}`}
+        aria-describedby={this.hintTextId}
+        aria-invalid={this.isInvalid ? 'true' : undefined}
         onClick={this.onClick}
+        aria-labelledby={hasLabel ? inputLabelId : null}
+        aria-label={inheritedAttributes['aria-label'] || null}
+        aria-disabled={disabled ? 'true' : null}
+        aria-required={required ? 'true' : undefined}
+        tabindex={disabled ? undefined : 0}
+        onKeyDown={this.onKeyDown}
+        onFocus={this.onFocus}
+        onBlur={this.onBlur}
         class={createColorClasses(color, {
           [mode]: true,
-          'in-item': hostContext('ion-item', el),
+          'in-item': inItem,
+          // `ion-focusable` has to stay on because it is what makes the item focusable.
+          // When the item draws the row indicator, CSS suppresses ours instead.
+          'ion-focusable': true,
+          'toggle-defers-indicator': inItem && !inMultipleInputsItem && !inClickableItem,
           'toggle-activated': activated,
           'toggle-checked': checked,
           'toggle-disabled': disabled,
-          [`toggle-justify-${justify}`]: true,
-          [`toggle-alignment-${alignment}`]: true,
+          [`toggle-justify-${justify}`]: justify !== undefined,
+          [`toggle-alignment-${alignment}`]: alignment !== undefined,
           [`toggle-label-placement-${labelPlacement}`]: true,
           [`toggle-${rtl}`]: true,
         })}
       >
-        <label class="toggle-wrapper">
+        <label class="toggle-wrapper" htmlFor={inputId}>
           {/*
             The native control must be rendered
             before the visible label text due to https://bugs.webkit.org/show_bug.cgi?id=251951
@@ -322,19 +518,20 @@ export class Toggle implements ComponentInterface {
             checked={checked}
             disabled={disabled}
             id={inputId}
-            onFocus={() => this.onFocus()}
-            onBlur={() => this.onBlur()}
-            ref={(focusEl) => (this.focusEl = focusEl)}
-            {...this.inheritedAttributes}
+            required={required}
+            {...inheritedAttributes}
           />
           <div
             class={{
               'label-text-wrapper': true,
-              'label-text-wrapper-hidden': !this.hasLabel,
+              'label-text-wrapper-hidden': !hasLabel,
             }}
             part="label"
+            id={inputLabelId}
+            onClick={this.onDivLabelClick}
           >
             <slot></slot>
+            {this.renderHintText()}
           </div>
           <div class="native-wrapper">{this.renderToggleControl()}</div>
         </label>

@@ -18,6 +18,9 @@ import { NavigationPage2Component } from '../navigation-page2/navigation-page2.c
 import { NavigationPage3Component } from '../navigation-page3/navigation-page3.component';
 import { AlertComponent } from '../alert/alert.component';
 import { AccordionComponent } from '../accordion/accordion.component';
+import { TabsBasicComponent } from '../tabs-basic/tabs-basic.component';
+import { AsyncChangeDetectionComponent } from '../async-change-detection/async-change-detection.component';
+import { AsyncChangeDetectionTabsComponent } from '../async-change-detection/async-change-detection-tabs.component';
 
 export const routes: Routes = [
   {
@@ -29,11 +32,21 @@ export const routes: Routes = [
       { path: 'accordions', component: AccordionComponent },
       { path: 'alerts', component: AlertComponent },
       { path: 'inputs', component: InputsComponent },
+      { path: 'async-change-detection', component: AsyncChangeDetectionComponent },
+      { path: 'async-change-detection-tabs', redirectTo: '/lazy/async-change-detection-tabs/tab-one', pathMatch: 'full' },
+      {
+        path: 'async-change-detection-tabs',
+        component: AsyncChangeDetectionTabsComponent,
+        children: [{ path: 'tab-one', component: AsyncChangeDetectionComponent }]
+      },
       { path: 'textarea', loadChildren: () => import('../textarea/textarea.module').then(m => m.TextareaModule) },
       { path: 'searchbar', loadChildren: () => import('../searchbar/searchbar.module').then(m => m.SearchbarModule) },
       { path: 'form', component: FormComponent },
+      { path: 'template-form', loadChildren: () => import('../template-form/template-form.module').then(m => m.TemplateFormModule) },
       { path: 'modals', component: ModalComponent },
       { path: 'modal-inline', loadChildren: () => import('../modal-inline').then(m => m.ModalInlineModule) },
+      { path: 'modal-sheet-inline', loadChildren: () => import('../modal-sheet-inline').then(m => m.ModalSheetInlineModule) },
+      { path: 'modal-dynamic-wrapper', loadChildren: () => import('../modal-dynamic-wrapper').then(m => m.ModalDynamicWrapperModule) },
       { path: 'view-child', component: ViewChildComponent },
       { path: 'keep-contents-mounted', loadChildren: () => import('../keep-contents-mounted').then(m => m.OverlayAutoMountModule) },
       { path: 'overlays-inline', loadChildren: () => import('../overlays-inline').then(m => m.OverlaysInlineModule) },
@@ -65,6 +78,7 @@ export const routes: Routes = [
         path: 'tabs-slots',
         loadComponent: () => import('../tabs-slots.component').then(c => c.TabsSlotsComponent)
       },
+      { path: 'tabs-basic', component: TabsBasicComponent },
       {
         path: 'nested-outlet',
         component: NestedOutletComponent,
@@ -86,4 +100,3 @@ export const routes: Routes = [
     ]
   },
 ];
-

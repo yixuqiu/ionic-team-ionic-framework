@@ -1,15 +1,15 @@
 import { getTimeGivenProgression } from '@utils/animation/cubic-bezier';
 import { isIonContent, findClosestIonContent, disableContentScrollY, resetContentScrollY } from '@utils/content';
 import { createGesture } from '@utils/gesture';
-import { clamp, getElementRoot } from '@utils/helpers';
+import { clamp } from '@utils/helpers';
 import { OVERLAY_GESTURE_PRIORITY } from '@utils/overlays';
 
-import type { Animation } from '../../../interface';
+import type { Animation, ModalDragEventDetail } from '../../../interface';
 import type { GestureDetail } from '../../../utils/gesture';
 import type { Style as StatusBarStyle } from '../../../utils/native/status-bar';
 import { setCardStatusBarDark, setCardStatusBarDefault } from '../utils';
 
-import { calculateSpringStep, handleCanDismiss } from './utils';
+import { calculateSpringStep, canSwipeOnContent, handleCanDismiss } from './utils';
 
 // Defaults for the card swipe animation
 export const SwipeToCloseDefaults = {
@@ -20,7 +20,10 @@ export const createSwipeToCloseGesture = (
   el: HTMLIonModalElement,
   animation: Animation,
   statusBarStyle: StatusBarStyle,
-  onDismiss: () => void
+  onDismiss: () => void,
+  onDragStart: () => void,
+  onDragMove: (detail: ModalDragEventDetail) => void,
+  onDragEnd: (detail: ModalDragEventDetail) => void
 ) => {
   /**
    * The step value at which a card modal
@@ -32,7 +35,6 @@ export const createSwipeToCloseGesture = (
   let isOpen = false;
   let canDismissBlocksGesture = false;
   let contentEl: HTMLElement | null = null;
-  let scrollEl: HTMLElement | null = null;
   const canDismissMaxStep = 0.2;
   let initialScrollY = true;
   let lastStep = 0;
@@ -57,12 +59,6 @@ export const createSwipeToCloseGesture = (
     }
 
     /**
-     * If we are swiping on the content,
-     * swiping should only be possible if
-     * the content is scrolled all the way
-     * to the top so that we do not interfere
-     * with scrolling.
-     *
      * We cannot assume that the `ion-content`
      * target will remain consistent between
      * swipes. For example, when using
@@ -73,29 +69,7 @@ export const createSwipeToCloseGesture = (
      */
     contentEl = findClosestIonContent(target);
     if (contentEl) {
-      /**
-       * The card should never swipe to close
-       * on the content with a refresher.
-       * Note: We cannot solve this by making the
-       * swipeToClose gesture have a higher priority
-       * than the refresher gesture as the iOS native
-       * refresh gesture uses a scroll listener in
-       * addition to a gesture.
-       *
-       * Note: Do not use getScrollElement here
-       * because we need this to be a synchronous
-       * operation, and getScrollElement is
-       * asynchronous.
-       */
-      if (isIonContent(contentEl)) {
-        const root = getElementRoot(contentEl);
-        scrollEl = root.querySelector('.inner-scroll');
-      } else {
-        scrollEl = contentEl;
-      }
-
-      const hasRefresherInContent = !!contentEl.querySelector('ion-refresher');
-      return !hasRefresherInContent && scrollEl!.scrollTop === 0;
+      return canSwipeOnContent(contentEl);
     }
 
     /**
@@ -112,6 +86,13 @@ export const createSwipeToCloseGesture = (
 
   const onStart = (detail: GestureDetail) => {
     const { deltaY } = detail;
+
+    /**
+     * Firefox automatically selects the header text during drag
+     * due to the focusable wrapper (tabindex="-1"). Remove any
+     * selection that may have occurred.
+     */
+    window.getSelection()?.removeAllRanges();
 
     /**
      * Get the initial scrollY value so
@@ -142,6 +123,8 @@ export const createSwipeToCloseGesture = (
     }
 
     animation.progressStart(true, isOpen ? 1 : 0);
+
+    onDragStart();
   };
 
   const onMove = (detail: GestureDetail) => {
@@ -220,6 +203,15 @@ export const createSwipeToCloseGesture = (
     }
 
     lastStep = clampedStep;
+
+    const eventDetail: ModalDragEventDetail = {
+      currentY: detail.currentY,
+      deltaY: detail.deltaY,
+      velocityY: detail.velocityY,
+      progress: calculateProgress(el, detail.deltaY),
+    };
+
+    onDragMove(eventDetail);
   };
 
   const onEnd = (detail: GestureDetail) => {
@@ -283,11 +275,35 @@ export const createSwipeToCloseGesture = (
      * check canDismiss. 25% was chosen
      * to avoid accidental swipes.
      */
-    if (isAttemptingDismissWithCanDismiss && clampedStep > maxStep / 4) {
+    const isAttemptingCanDismiss = isAttemptingDismissWithCanDismiss && clampedStep > maxStep / 4;
+
+    if (isAttemptingCanDismiss) {
       handleCanDismiss(el, animation);
     } else if (shouldComplete) {
       onDismiss();
     }
+
+    /**
+     * `shouldComplete` is not enough on its own, since it is always `false`
+     * when canDismiss blocks the gesture. `canDismiss: false` blocks it and
+     * never dismisses, because `handleCanDismiss` returns early when
+     * canDismiss is not a function. A canDismiss function dismisses through
+     * `handleCanDismiss`, which awaits the callback, so the outcome is not
+     * known when this event is emitted.
+     */
+    const isDismissing = isAttemptingDismissWithCanDismiss
+      ? isAttemptingCanDismiss && typeof el.canDismiss === 'function'
+      : shouldComplete;
+
+    const eventDetail: ModalDragEventDetail = {
+      currentY: detail.currentY,
+      deltaY: detail.deltaY,
+      velocityY: detail.velocityY,
+      progress: calculateProgress(el, detail.deltaY),
+      isDismissing,
+    };
+
+    onDragEnd(eventDetail);
   };
 
   const gesture = createGesture({
@@ -306,4 +322,44 @@ export const createSwipeToCloseGesture = (
 
 const computeDuration = (remaining: number, velocity: number) => {
   return clamp(400, remaining / Math.abs(velocity * 1.1), 500);
+};
+
+/**
+ * Calculates the progress of the swipe gesture.
+ *
+ * The progress is a value between 0 and 1 that represents how far
+ * the swipe has progressed towards closing the modal.
+ *
+ * A value closer to 1 means the modal is closer to being opened,
+ * while a value closer to 0 means the modal is closer to being closed.
+ *
+ * @param el The modal
+ * @param deltaY The change in Y position (positive when dragging down, negative when dragging up)
+ * @returns The progress of the swipe gesture
+ */
+const calculateProgress = (el: HTMLIonModalElement, deltaY: number): number => {
+  const windowHeight = window.innerHeight;
+  // Position when fully open
+  const modalTop = el.getBoundingClientRect().top;
+  /**
+   * The distance between the top of the modal and the bottom of the screen
+   * is the total distance the modal needs to travel to be fully closed.
+   */
+  const totalDistance = windowHeight - modalTop;
+  /**
+   * The pull percentage is how far the user has swiped compared to the total
+   * distance needed to close the modal.
+   */
+  const pullPercentage = deltaY / totalDistance;
+  /**
+   * The progress is the inverse of the pull percentage because
+   * when the user starts swiping up, the progress should be close to 1,
+   * and when the user has swiped all the way down, the progress should be
+   * close to 0.
+   */
+  const progress = 1 - pullPercentage;
+  // Round to the nearest thousandth to avoid returning very small decimal
+  const roundedProgress = Math.round(progress * 1000) / 1000;
+
+  return Math.max(0, Math.min(1, roundedProgress));
 };

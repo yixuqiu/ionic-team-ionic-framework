@@ -4,7 +4,7 @@ import { ENABLE_HTML_CONTENT_DEFAULT } from '@utils/config';
 import type { Gesture } from '@utils/gesture';
 import { raf } from '@utils/helpers';
 import { createLockController } from '@utils/lock-controller';
-import { printIonWarning } from '@utils/logging';
+import { printIonError, printIonWarning } from '@utils/logging';
 import {
   GESTURE,
   createDelegateController,
@@ -47,12 +47,14 @@ import type {
 /**
  * @virtualProp {"ios" | "md"} mode - The mode determines which platform styles to use.
  *
- * @part button - Any button element that is displayed inside of the toast.
- * @part button cancel - Any button element with role "cancel" that is displayed inside of the toast.
- * @part container - The element that wraps all child elements.
+ * @part wrapper - The outer wrapper for the toast overlay.
+ * @part container - Groups the icon, content, and buttons.
+ * @part content - The live region that contains the header and message.
  * @part header - The header text of the toast.
  * @part message - The body text of the toast.
  * @part icon - The icon that appears next to the toast content.
+ * @part button - Any button element that is displayed inside of the toast.
+ * @part button cancel - Any button element with role "cancel" that is displayed inside of the toast.
  */
 @Component({
   tag: 'ion-toast',
@@ -321,7 +323,9 @@ export class Toast implements ComponentInterface, OverlayInterface {
   }
 
   componentWillLoad() {
-    setOverlayId(this.el);
+    if (!this.htmlAttributes?.id) {
+      setOverlayId(this.el);
+    }
   }
 
   componentDidLoad() {
@@ -395,16 +399,15 @@ export class Toast implements ComponentInterface, OverlayInterface {
 
   /**
    * Dismiss the toast overlay after it has been presented.
+   * This is a no-op if the overlay has not been presented yet. If you want
+   * to remove an overlay from the DOM that was never presented, use the
+   * [remove](https://developer.mozilla.org/en-US/docs/Web/API/Element/remove) method.
    *
    * @param data Any data to emit in the dismiss events.
    * @param role The role of the element that is dismissing the toast.
    * This can be useful in a button handler for determining which button was
    * clicked to dismiss the toast.
-   * Some examples include: ``"cancel"`, `"destructive"`, "selected"`, and `"backdrop"`.
-   *
-   * This is a no-op if the overlay has not been presented yet. If you want
-   * to remove an overlay from the DOM that was never presented, use the
-   * [remove](https://developer.mozilla.org/en-US/docs/Web/API/Element/remove) method.
+   * Some examples include: `"cancel"`, `"destructive"`, `"selected"`, and `"backdrop"`.
    */
   @Method()
   async dismiss(data?: any, role?: string): Promise<boolean> {
@@ -496,7 +499,7 @@ export class Toast implements ComponentInterface, OverlayInterface {
     }
 
     if (position === 'middle' && positionAnchor !== undefined) {
-      printIonWarning('The positionAnchor property is ignored when using position="middle".', this.el);
+      printIonWarning('[ion-toast] - The positionAnchor property is ignored when using position="middle".', this.el);
       return undefined;
     }
 
@@ -509,7 +512,10 @@ export class Toast implements ComponentInterface, OverlayInterface {
        */
       const foundEl = document.getElementById(positionAnchor);
       if (foundEl === null) {
-        printIonWarning(`An anchor element with an ID of "${positionAnchor}" was not found in the DOM.`, el);
+        printIonWarning(
+          `[ion-toast] - An anchor element with an ID of "${positionAnchor}" was not found in the DOM.`,
+          el
+        );
         return undefined;
       }
 
@@ -520,7 +526,7 @@ export class Toast implements ComponentInterface, OverlayInterface {
       return positionAnchor;
     }
 
-    printIonWarning('Invalid positionAnchor value:', positionAnchor, el);
+    printIonWarning('[ion-toast] - Invalid positionAnchor value:', positionAnchor, el);
     return undefined;
   }
 
@@ -547,7 +553,7 @@ export class Toast implements ComponentInterface, OverlayInterface {
           return false;
         }
       } catch (e) {
-        console.error(e);
+        printIonError('[ion-toast] - Exception in callButtonHandler:', e);
       }
     }
     return true;
@@ -703,7 +709,7 @@ export class Toast implements ComponentInterface, OverlayInterface {
      */
     if (layout === 'stacked' && startButtons.length > 0 && endButtons.length > 0) {
       printIonWarning(
-        'This toast is using start and end buttons with the stacked toast layout. We recommend following the best practice of using either start or end buttons with the stacked toast layout.',
+        '[ion-toast] - This toast is using start and end buttons with the stacked toast layout. We recommend following the best practice of using either start or end buttons with the stacked toast layout.',
         el
       );
     }
@@ -723,7 +729,7 @@ export class Toast implements ComponentInterface, OverlayInterface {
         })}
         onIonToastWillDismiss={this.dispatchCancelHandler}
       >
-        <div class={wrapperClass}>
+        <div class={wrapperClass} part="wrapper">
           <div class="toast-container" part="container">
             {this.renderButtons(startButtons, 'start')}
 
@@ -742,7 +748,7 @@ export class Toast implements ComponentInterface, OverlayInterface {
               not interrupt the user which is why this has
               a "status" role and a "polite" presentation.
             */}
-            <div class="toast-content" role="status" aria-atomic="true" aria-live="polite">
+            <div class="toast-content" part="content" role="status" aria-atomic="true" aria-live="polite">
               {/*
                 This logic below is done to improve consistency
                 across platforms when showing and updating live regions.

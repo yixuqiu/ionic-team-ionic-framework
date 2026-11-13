@@ -1,9 +1,10 @@
 import { AfterViewInit, Component, ViewChild } from '@angular/core';
-import { IonSlides } from '@ionic/angular';
+import { IonSlides } from '@ionic/angular/lazy';
 
 @Component({
   selector: 'app-slides',
   templateUrl: './slides.component.html',
+  standalone: false
 })
 export class SlidesComponent implements AfterViewInit {
   @ViewChild(IonSlides, { static: true }) slides!: IonSlides;

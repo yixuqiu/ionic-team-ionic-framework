@@ -2,18 +2,20 @@ import type { ComponentInterface, EventEmitter } from '@stencil/core';
 import { Component, Element, Event, Host, Method, Prop, State, Watch, h, readTask, writeTask } from '@stencil/core';
 import { getTimeGivenProgression } from '@utils/animation/cubic-bezier';
 import {
+  findRefresherScrollHost,
   getScrollElement,
   ION_CONTENT_CLASS_SELECTOR,
   ION_CONTENT_ELEMENT_SELECTOR,
   printIonContentErrorMsg,
 } from '@utils/content';
 import { clamp, componentOnReady, getElementRoot, raf, transitionEndAsync } from '@utils/helpers';
+import { printIonError } from '@utils/logging';
 import { ImpactStyle, hapticImpact } from '@utils/native/haptic';
 
 import { getIonMode } from '../../global/ionic-global';
 import type { Animation, Gesture, GestureDetail } from '../../interface';
 
-import type { RefresherEventDetail } from './refresher-interface';
+import type { RefresherEventDetail, RefresherPullEndEventDetail } from './refresher-interface';
 import {
   createPullingAnimation,
   createSnapBackAnimation,
@@ -48,6 +50,7 @@ export class Refresher implements ComponentInterface {
   private pointerDown = false;
   private needsCompletion = false;
   private didRefresh = false;
+  private contentFullscreen = false;
   private lastVelocityY = 0;
   private elementToTransform?: HTMLElement;
   private animations: Animation[] = [];
@@ -105,8 +108,8 @@ export class Refresher implements ComponentInterface {
    * than `1`. The default value is `1` which is equal to the speed of the cursor.
    * If a negative value is passed in, the factor will be `1` instead.
    *
-   * For example: If the value passed is `1.2` and the content is dragged by
-   * `10` pixels, instead of `10` pixels the content will be pulled by `12` pixels
+   * For example, If the value passed is `1.2` and the content is dragged by
+   * `10` pixels, instead of `10` pixels, the content will be pulled by `12` pixels
    * (an increase of 20 percent). If the value passed is `0.8`, the dragged amount
    * will be `8` pixels, less than the amount the cursor has moved.
    *
@@ -139,10 +142,25 @@ export class Refresher implements ComponentInterface {
    */
   @Event() ionPull!: EventEmitter<void>;
 
+  // TODO(FW-7044): Remove this in a major release
+  /**
+   * Emitted when the user begins to start pulling down.
+   *
+   * @deprecated Use `ionPullStart` instead.
+   */
+  @Event() ionStart!: EventEmitter<void>;
+
   /**
    * Emitted when the user begins to start pulling down.
    */
-  @Event() ionStart!: EventEmitter<void>;
+  @Event() ionPullStart!: EventEmitter<void>;
+
+  /**
+   * Emitted when the refresher has returned to the inactive state
+   * after a pull gesture. This fires whether the refresh completed
+   * successfully or was canceled.
+   */
+  @Event() ionPullEnd!: EventEmitter<RefresherPullEndEventDetail>;
 
   private async checkNativeRefresher() {
     const useNativeRefresher = await shouldUseNativeRefresher(this.el, getIonMode(this));
@@ -180,6 +198,10 @@ export class Refresher implements ComponentInterface {
     this.progress = 0;
 
     this.state = RefresherState.Inactive;
+
+    this.ionPullEnd.emit({
+      reason: state === RefresherState.Completing ? 'complete' : 'cancel',
+    });
   }
 
   private async setupiOSNativeRefresher(
@@ -222,6 +244,7 @@ export class Refresher implements ComponentInterface {
           if (!this.didStart) {
             this.didStart = true;
             this.ionStart.emit();
+            this.ionPullStart.emit();
           }
 
           // emit "pulling" on every move
@@ -252,6 +275,15 @@ export class Refresher implements ComponentInterface {
             hapticImpact({ style: ImpactStyle.Light });
 
             /**
+             * Clear focus from any active element to prevent scroll jumps
+             * when the refresh completes
+             */
+            const activeElement = document.activeElement as HTMLElement;
+            if (activeElement?.blur !== undefined) {
+              activeElement.blur();
+            }
+
+            /**
              * Translate the content element otherwise when pointer is removed
              * from screen the scroll content will bounce back over the refresher
              */
@@ -268,8 +300,19 @@ export class Refresher implements ComponentInterface {
 
     this.scrollEl!.addEventListener('scroll', this.scrollListenerCallback);
 
-    this.gesture = (await import('../../utils/gesture')).createGesture({
-      el: this.scrollEl!,
+    const { createGesture } = await import('../../utils/gesture');
+
+    /**
+     * Awaiting the dynamic import yields to the event loop, so the component can
+     * disconnect before it resolves. disconnectedCallback clears scrollEl, so a
+     * missing scrollEl here means there is nothing left to attach a gesture to.
+     */
+    if (!this.scrollEl) {
+      return;
+    }
+
+    this.gesture = createGesture({
+      el: this.scrollEl,
       gestureName: 'refresher',
       gesturePriority: 31,
       direction: 'y',
@@ -297,6 +340,7 @@ export class Refresher implements ComponentInterface {
         this.lastVelocityY = ev.velocityY;
       },
       onEnd: () => {
+        const hadStarted = this.didStart;
         this.pointerDown = false;
         this.didStart = false;
 
@@ -305,6 +349,12 @@ export class Refresher implements ComponentInterface {
           this.needsCompletion = false;
         } else if (this.didRefresh) {
           readTask(() => translateElement(this.elementToTransform, `${this.el.clientHeight}px`));
+        } else if (hadStarted) {
+          /**
+           * User started pulling but released before reaching the refresh threshold.
+           * Emit ionPullEnd to complete the event pair.
+           */
+          this.ionPullEnd.emit({ reason: 'cancel' });
         }
       },
     });
@@ -331,8 +381,19 @@ export class Refresher implements ComponentInterface {
       });
     }
 
-    this.gesture = (await import('../../utils/gesture')).createGesture({
-      el: this.scrollEl!,
+    const { createGesture } = await import('../../utils/gesture');
+
+    /**
+     * Awaiting the dynamic import yields to the event loop, so the component can
+     * disconnect before it resolves. disconnectedCallback clears scrollEl, so a
+     * missing scrollEl here means there is nothing left to attach a gesture to.
+     */
+    if (!this.scrollEl) {
+      return;
+    }
+
+    this.gesture = createGesture({
+      el: this.scrollEl,
       gestureName: 'refresher',
       gesturePriority: 31,
       direction: 'y',
@@ -367,6 +428,7 @@ export class Refresher implements ComponentInterface {
           ev.data.animation = animation;
           animation.progressStart(false, 0);
           this.ionStart.emit();
+          this.ionPullStart.emit();
           this.animations.push(animation);
 
           return;
@@ -394,6 +456,7 @@ export class Refresher implements ComponentInterface {
             this.animations = [];
             this.gesture!.enable(true);
             this.state = RefresherState.Inactive;
+            this.ionPullEnd.emit({ reason: 'cancel' });
           });
           return;
         }
@@ -449,11 +512,19 @@ export class Refresher implements ComponentInterface {
     this.checkNativeRefresher();
   }
 
-  async connectedCallback() {
+  /**
+   * Validate the slot attribute before rendering, while the host still reflects the
+   * developer's original markup. `connectedCallback` is too early: in the custom
+   * elements build it runs during insertion, before frameworks such as React assign
+   * the slot.
+   */
+  componentWillLoad() {
     if (this.el.getAttribute('slot') !== 'fixed') {
-      console.error('Make sure you use: <ion-refresher slot="fixed">');
-      return;
+      printIonError('[ion-refresher] - Make sure you use: <ion-refresher slot="fixed">');
     }
+  }
+
+  async connectedCallback() {
     const contentEl = this.el.closest(ION_CONTENT_ELEMENT_SELECTOR);
     if (!contentEl) {
       printIonContentErrorMsg(this.el);
@@ -464,7 +535,7 @@ export class Refresher implements ComponentInterface {
      * or the background content element.
      */
     componentOnReady(contentEl, async () => {
-      const customScrollTarget = contentEl.querySelector(ION_CONTENT_CLASS_SELECTOR);
+      const customScrollTarget = findRefresherScrollHost(contentEl);
       /**
        * Query the custom scroll target (if available), first. In refresher implementations,
        * the ion-refresher element will always be a direct child of ion-content (slot="fixed"). By
@@ -476,11 +547,28 @@ export class Refresher implements ComponentInterface {
        * Query the background content element from the host ion-content element directly.
        */
       this.backgroundContentEl = await contentEl.getBackgroundElement();
+      /**
+       * Check if the content element is fullscreen to apply the correct styles
+       * when the refresher is refreshing. Otherwise, the refresher will be
+       * hidden because it is positioned behind the background content element.
+       */
+      this.contentFullscreen = contentEl.fullscreen;
 
       if (await shouldUseNativeRefresher(this.el, getIonMode(this))) {
         this.setupNativeRefresher(contentEl);
       } else {
-        this.gesture = (await import('../../utils/gesture')).createGesture({
+        const { createGesture } = await import('../../utils/gesture');
+
+        /**
+         * Awaiting the dynamic import yields to the event loop, so the component can
+         * disconnect before it resolves. A disconnected contentEl means there is
+         * nothing left to attach a gesture to.
+         */
+        if (!contentEl.isConnected) {
+          return;
+        }
+
+        this.gesture = createGesture({
           el: contentEl,
           gestureName: 'refresher',
           gesturePriority: 31,
@@ -578,6 +666,15 @@ export class Refresher implements ComponentInterface {
     this.progress = 0;
     this.state = RefresherState.Inactive;
     this.memoizeOverflowStyle();
+
+    /**
+     * If the content is fullscreen, then we need to
+     * set the offset-top style on the background content
+     * element to ensure that the refresher is shown.
+     */
+    if (this.contentFullscreen && this.backgroundContentEl) {
+      this.backgroundContentEl.style.setProperty('--offset-top', '0px');
+    }
   }
 
   private onMove(detail: GestureDetail) {
@@ -658,6 +755,7 @@ export class Refresher implements ComponentInterface {
     if (!this.didStart) {
       this.didStart = true;
       this.ionStart.emit();
+      this.ionPullStart.emit();
     }
 
     // emit "pulling" on every move
@@ -705,6 +803,16 @@ export class Refresher implements ComponentInterface {
        * available right away.
        */
       this.restoreOverflowStyle();
+
+      /**
+       * If ionPullStart was emitted, we need to emit ionPullEnd
+       * even though the gesture was aborted before reaching the
+       * pulling threshold.
+       */
+      if (this.didStart) {
+        this.didStart = false;
+        this.ionPullEnd.emit({ reason: 'cancel' });
+      }
     }
   }
 
@@ -715,6 +823,16 @@ export class Refresher implements ComponentInterface {
 
     // place the content in a hangout position while it thinks
     this.setCss(this.pullMin, this.snapbackDuration, true, '');
+
+    /**
+     * Clear focus from any active element to prevent the browser
+     * from restoring focus and causing scroll jumps after refresh.
+     * This ensures the view stays at the top after refresh completes.
+     */
+    const activeElement = document.activeElement as HTMLElement;
+    if (activeElement?.blur !== undefined) {
+      activeElement.blur();
+    }
 
     // emit "refresh" because it was pulled down far enough
     // and they let go to begin refreshing
@@ -735,6 +853,22 @@ export class Refresher implements ComponentInterface {
        * user can scroll again.
        */
       this.setCss(0, '0ms', false, '', true);
+
+      /**
+       * Reset the offset-top style on the background content
+       * when the refresher is no longer refreshing and the
+       * content is fullscreen.
+       *
+       * This ensures that the behavior of background content
+       * does not change when refreshing is complete.
+       */
+      if (this.contentFullscreen && this.backgroundContentEl) {
+        this.backgroundContentEl?.style.removeProperty('--offset-top');
+      }
+
+      this.ionPullEnd.emit({
+        reason: state === RefresherState.Completing ? 'complete' : 'cancel',
+      });
     }, 600);
 
     // reset the styles on the scroll element

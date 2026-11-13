@@ -174,18 +174,6 @@ configs({ modes: ['md'], directions: ['ltr'] }).forEach(({ title, config }) => {
       await expect(monthYear).toHaveText(/June 2022/);
     });
 
-    test('should not scroll to new month when value is updated with dates in different months', async ({ page }) => {
-      const datetime = await datetimeFixture.goto(config, MULTIPLE_DATES);
-      await datetime.evaluate((el: HTMLIonDatetimeElement, dates: string[]) => {
-        el.value = dates;
-      }, MULTIPLE_DATES_SEPARATE_MONTHS);
-
-      await page.waitForChanges();
-
-      const monthYear = datetime.locator('.calendar-month-year');
-      await expect(monthYear).toHaveText(/June 2022/);
-    });
-
     test('with buttons, should only update value when confirm is called', async ({ page }) => {
       const datetime = await datetimeFixture.goto(config, SINGLE_DATE, { showDefaultButtons: true });
       const june2Button = datetime.locator('[data-month="6"][data-day="2"]');
@@ -311,4 +299,162 @@ configs({ modes: ['md'], directions: ['ltr'] }).forEach(({ title, config }) => {
       await expect(header).toHaveText('Mon, Oct 10');
     });
   });
+
+  test.describe('with selected days in different months', () => {
+    test(`set the active month view to the latest value's month`, async ({ page }, testInfo) => {
+      testInfo.annotations.push({
+        type: 'issue',
+        description: 'https://github.com/ionic-team/ionic-framework/issues/29094',
+      });
+
+      const datetime = await new DatetimeMultipleFixture(page).goto(config, MULTIPLE_DATES_SEPARATE_MONTHS);
+      const calendarMonthYear = datetime.locator('.calendar-month-year');
+
+      await expect(calendarMonthYear).toHaveText(/May 2022/);
+    });
+
+    test('does not change the active month view when selecting a day in a different month', async ({
+      page,
+    }, testInfo) => {
+      testInfo.annotations.push({
+        type: 'issue',
+        description: 'https://github.com/ionic-team/ionic-framework/issues/29094',
+      });
+
+      const datetime = await new DatetimeMultipleFixture(page).goto(config, MULTIPLE_DATES_SEPARATE_MONTHS);
+      const nextButton = page.locator('.calendar-next-prev ion-button:nth-child(2)');
+      const calendarMonthYear = datetime.locator('.calendar-month-year');
+
+      await nextButton.click();
+
+      await expect(calendarMonthYear).toHaveText(/June 2022/);
+
+      const june8Button = datetime.locator('[data-month="6"][data-day="8"]');
+
+      await june8Button.click();
+
+      await expect(calendarMonthYear).toHaveText(/June 2022/);
+    });
+  });
+});
+
+configs({ modes: ['md'], directions: ['ltr'] }).forEach(({ title, config }) => {
+  test.describe(
+    title('datetime: interaction between month/year wheels and selected date(s) with different values of multiple'),
+    () => {
+      test('using month wheel should change selection when multiple=false', async ({ page }, testInfo) => {
+        testInfo.annotations.push({
+          type: 'issue',
+          description: 'https://github.com/ionic-team/ionic-framework/issues/29673',
+        });
+
+        await page.setContent(`<ion-datetime value="2026-06-26T10:36:00" locale="en-US"></ion-datetime>`, config);
+        const datetime = page.locator('ion-datetime');
+
+        await page.waitForSelector('.datetime-ready');
+
+        const dropdownButton = page.locator('.calendar-month-year-toggle');
+        await dropdownButton.click();
+        await page.waitForChanges();
+
+        const monthOption = page.locator('.month-column ion-picker-column-option').nth(0);
+        await monthOption.click();
+        await page.waitForChanges();
+
+        await expect(datetime).toHaveJSProperty('value', '2026-01-26T10:36:00');
+      });
+
+      test('using month wheel should not change selection when multiple=true', async ({ page }, testInfo) => {
+        testInfo.annotations.push({
+          type: 'issue',
+          description: 'https://github.com/ionic-team/ionic-framework/issues/29673',
+        });
+
+        await page.setContent(
+          `
+        <ion-datetime multiple locale="en-US"></ion-datetime>
+        <script>
+          const datetime = document.querySelector('ion-datetime');
+          datetime.value = [ "2026-06-26T10:36:00", "2026-06-28T10:36:00", "2026-01-01T10:36:00" ];
+        </script>
+      `,
+          config
+        );
+        const datetime = page.locator('ion-datetime');
+
+        await page.waitForSelector('.datetime-ready');
+
+        const dropdownButton = page.locator('.calendar-month-year-toggle');
+        await dropdownButton.click();
+        await page.waitForChanges();
+
+        const monthOption = page.locator('.month-column ion-picker-column-option').nth(0);
+        await monthOption.click();
+        await page.waitForChanges();
+
+        await expect(datetime).toHaveJSProperty('value', [
+          '2026-06-26T10:36:00',
+          '2026-06-28T10:36:00',
+          '2026-01-01T10:36:00',
+        ]);
+      });
+
+      test('using year wheel should change selection when multiple=false', async ({ page }, testInfo) => {
+        testInfo.annotations.push({
+          type: 'issue',
+          description: 'https://github.com/ionic-team/ionic-framework/issues/29673',
+        });
+
+        await page.setContent(`<ion-datetime value="2026-06-26T10:36:00" locale="en-US"></ion-datetime>`, config);
+        const datetime = page.locator('ion-datetime');
+
+        await page.waitForSelector('.datetime-ready');
+
+        const dropdownButton = page.locator('.calendar-month-year-toggle');
+        await dropdownButton.click();
+        await page.waitForChanges();
+
+        const yearOption = page.locator('.year-column ion-picker-column-option').nth(0);
+        await yearOption.click();
+        await page.waitForChanges();
+
+        await expect(datetime).toHaveJSProperty('value', '1926-06-26T10:36:00');
+      });
+
+      test('using year wheel should not change selection when multiple=true', async ({ page }, testInfo) => {
+        testInfo.annotations.push({
+          type: 'issue',
+          description: 'https://github.com/ionic-team/ionic-framework/issues/29673',
+        });
+
+        await page.setContent(
+          `
+        <ion-datetime multiple locale="en-US"></ion-datetime>
+        <script>
+          const datetime = document.querySelector('ion-datetime');
+          datetime.value = [ "2026-06-26T10:36:00", "2026-06-28T10:36:00", "2026-01-01T10:36:00" ];
+        </script>
+      `,
+          config
+        );
+        const datetime = page.locator('ion-datetime');
+
+        await page.waitForSelector('.datetime-ready');
+
+        const dropdownButton = page.locator('.calendar-month-year-toggle');
+        await dropdownButton.click();
+        await page.waitForChanges();
+
+        const yearOption = page.locator('.year-column ion-picker-column-option').nth(0);
+        await yearOption.click();
+        await page.waitForChanges();
+
+        await expect(datetime).toHaveJSProperty('value', [
+          '2026-06-26T10:36:00',
+          '2026-06-28T10:36:00',
+          '2026-01-01T10:36:00',
+        ]);
+      });
+    }
+  );
 });

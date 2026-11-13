@@ -1,5 +1,6 @@
 import type { ComponentInterface, EventEmitter } from '@stencil/core';
 import { Component, Element, Event, Host, Prop, State, Watch, h } from '@stencil/core';
+import { isRTL } from '@utils/rtl';
 import { createColorClasses, hostContext } from '@utils/theme';
 
 import { getIonMode } from '../../global/ionic-global';
@@ -18,6 +19,7 @@ import type { Color, StyleEventDetail } from '../../interface';
 })
 export class Label implements ComponentInterface {
   private inRange = false;
+  private loadTimeout: ReturnType<typeof setTimeout> | undefined;
 
   @Element() el!: HTMLElement;
 
@@ -56,9 +58,15 @@ export class Label implements ComponentInterface {
 
   componentDidLoad() {
     if (this.noAnimate) {
-      setTimeout(() => {
+      this.loadTimeout = setTimeout(() => {
         this.noAnimate = false;
       }, 1000);
+    }
+  }
+
+  disconnectedCallback() {
+    if (this.loadTimeout) {
+      clearTimeout(this.loadTimeout);
     }
   }
 
@@ -105,7 +113,7 @@ export class Label implements ComponentInterface {
           'in-item-color': hostContext('ion-item.ion-color', this.el),
           [`label-${position}`]: position !== undefined,
           [`label-no-animate`]: this.noAnimate,
-          'label-rtl': document.dir === 'rtl',
+          'label-rtl': isRTL(this.el),
         })}
       >
         <slot></slot>

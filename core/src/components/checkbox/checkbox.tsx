@@ -1,5 +1,6 @@
 import type { ComponentInterface, EventEmitter } from '@stencil/core';
-import { Component, Element, Event, Host, Prop, h } from '@stencil/core';
+import { Build, Component, Element, Event, Host, Method, Prop, State, forceUpdate, h } from '@stencil/core';
+import { checkInvalidState, createItemMultipleInputsObserver } from '@utils/forms';
 import type { Attributes } from '@utils/helpers';
 import { inheritAriaAttributes, renderHiddenInput } from '@utils/helpers';
 import { createColorClasses, hostContext } from '@utils/theme';
@@ -17,6 +18,9 @@ import type { CheckboxChangeEventDetail } from './checkbox-interface';
  * @part container - The container for the checkbox mark.
  * @part label - The label text describing the checkbox.
  * @part mark - The checkmark used to indicate the checked state.
+ * @part supporting-text - Supporting text displayed beneath the checkbox label.
+ * @part helper-text - Supporting text displayed beneath the checkbox label when the checkbox is valid.
+ * @part error-text - Supporting text displayed beneath the checkbox label when the checkbox is invalid and touched.
  */
 @Component({
   tag: 'ion-checkbox',
@@ -28,8 +32,12 @@ import type { CheckboxChangeEventDetail } from './checkbox-interface';
 })
 export class Checkbox implements ComponentInterface {
   private inputId = `ion-cb-${checkboxIds++}`;
-  private focusEl?: HTMLElement;
+  private inputLabelId = `${this.inputId}-lbl`;
+  private helperTextId = `${this.inputId}-helper-text`;
+  private errorTextId = `${this.inputId}-error-text`;
   private inheritedAttributes: Attributes = {};
+  private validationObserver?: MutationObserver;
+  private itemFocusObserver?: MutationObserver;
 
   @Element() el!: HTMLIonCheckboxElement;
 
@@ -61,6 +69,16 @@ export class Checkbox implements ComponentInterface {
   @Prop() disabled = false;
 
   /**
+   * Text that is placed under the checkbox label and displayed when an error is detected.
+   */
+  @Prop() errorText?: string;
+
+  /**
+   * Text that is placed under the checkbox label and displayed when no error is detected.
+   */
+  @Prop() helperText?: string;
+
+  /**
    * The value of the checkbox does not mean if it's checked or not, use the `checked`
    * property for that.
    *
@@ -86,15 +104,33 @@ export class Checkbox implements ComponentInterface {
    * on the left in RTL.
    * `"space-between"`: The label and checkbox will appear on opposite
    * ends of the line with space between the two elements.
+   * Setting this property will change the checkbox `display` to `block`.
    */
-  @Prop() justify: 'start' | 'end' | 'space-between' = 'space-between';
+  @Prop() justify?: 'start' | 'end' | 'space-between';
 
   /**
    * How to control the alignment of the checkbox and label on the cross axis.
    * `"start"`: The label and control will appear on the left of the cross axis in LTR, and on the right side in RTL.
    * `"center"`: The label and control will appear at the center of the cross axis in both LTR and RTL.
+   * Setting this property will change the checkbox `display` to `block`.
    */
-  @Prop() alignment: 'start' | 'center' = 'center';
+  @Prop() alignment?: 'start' | 'center';
+
+  /**
+   * If true, screen readers will announce it as a required field. This property
+   * works only for accessibility purposes, it will not prevent the form from
+   * submitting if the value is invalid.
+   */
+  @Prop() required = false;
+
+  /**
+   * Track validation state for proper aria-live announcements.
+   */
+  @State() isInvalid = false;
+
+  @State() private hasLabelContent = false;
+
+  @State() private hintTextId?: string;
 
   /**
    * Emitted when the checked property has changed as a result of a user action such as a click.
@@ -113,16 +149,84 @@ export class Checkbox implements ComponentInterface {
    */
   @Event() ionBlur!: EventEmitter<void>;
 
+  connectedCallback() {
+    const { el } = this;
+
+    if (Build.isBrowser && typeof MutationObserver !== 'undefined') {
+      this.validationObserver = new MutationObserver((mutations) => {
+        // Watch for label content changes
+        if (mutations.some((mutation) => mutation.type === 'characterData' || mutation.type === 'childList')) {
+          this.hasLabelContent = this.el.textContent !== '';
+        }
+        // Watch for class changes to update validation state.
+        if (mutations.some((mutation) => mutation.type === 'attributes' && mutation.target === el)) {
+          const newIsInvalid = checkInvalidState(el);
+          if (this.isInvalid !== newIsInvalid) {
+            this.isInvalid = newIsInvalid;
+            /**
+             * Screen readers tend to announce changes
+             * to `aria-describedby` when the attribute
+             * is changed during a blur event for a
+             * native form control.
+             * However, the announcement can be spotty
+             * when using a non-native form control
+             * and `forceUpdate()`.
+             * This is due to `forceUpdate()` internally
+             * rescheduling the DOM update to a lower
+             * priority queue regardless if it's called
+             * inside a Promise or not, thus causing
+             * the screen reader to potentially miss the
+             * change.
+             * By using a State variable inside a Promise,
+             * it guarantees a re-render immediately at
+             * a higher priority.
+             */
+            Promise.resolve().then(() => {
+              this.hintTextId = this.getHintTextId();
+            });
+          }
+        }
+      });
+
+      this.validationObserver.observe(el, {
+        attributes: true,
+        attributeFilter: ['class'],
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+    }
+
+    // Always set initial state
+    this.isInvalid = checkInvalidState(el);
+    this.hasLabelContent = this.el.textContent !== '';
+
+    this.itemFocusObserver = createItemMultipleInputsObserver(el, () => forceUpdate(this));
+  }
+
   componentWillLoad() {
     this.inheritedAttributes = {
       ...inheritAriaAttributes(this.el),
     };
+
+    this.hintTextId = this.getHintTextId();
   }
 
-  private setFocus() {
-    if (this.focusEl) {
-      this.focusEl.focus();
+  disconnectedCallback() {
+    if (this.validationObserver) {
+      this.validationObserver.disconnect();
+      this.validationObserver = undefined;
     }
+    if (this.itemFocusObserver) {
+      this.itemFocusObserver.disconnect();
+      this.itemFocusObserver = undefined;
+    }
+  }
+
+  /** @internal */
+  @Method()
+  async setFocus() {
+    this.el.focus();
   }
 
   /**
@@ -142,7 +246,6 @@ export class Checkbox implements ComponentInterface {
   private toggleChecked = (ev: Event) => {
     ev.preventDefault();
 
-    this.setFocus();
     this.setChecked(!this.checked);
     this.indeterminate = false;
   };
@@ -155,6 +258,15 @@ export class Checkbox implements ComponentInterface {
     this.ionBlur.emit();
   };
 
+  private onKeyDown = (ev: KeyboardEvent) => {
+    if (ev.key === ' ') {
+      ev.preventDefault();
+      if (!this.disabled) {
+        this.toggleChecked(ev);
+      }
+    }
+  };
+
   private onClick = (ev: MouseEvent) => {
     if (this.disabled) {
       return;
@@ -162,6 +274,56 @@ export class Checkbox implements ComponentInterface {
 
     this.toggleChecked(ev);
   };
+
+  /**
+   * Stops propagation when the display label is clicked,
+   * otherwise, two clicks will be triggered.
+   */
+  private onDivLabelClick = (ev: MouseEvent) => {
+    ev.stopPropagation();
+  };
+
+  private getHintTextId(): string | undefined {
+    const { helperText, errorText, helperTextId, errorTextId, isInvalid } = this;
+
+    if (isInvalid && errorText) {
+      return errorTextId;
+    }
+
+    if (helperText) {
+      return helperTextId;
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Responsible for rendering helper text and error text.
+   * This element should only be rendered if hint text is set.
+   */
+  private renderHintText() {
+    const { helperText, errorText, helperTextId, errorTextId, isInvalid } = this;
+
+    /**
+     * undefined and empty string values should
+     * be treated as not having helper/error text.
+     */
+    const hasHintText = !!helperText || !!errorText;
+    if (!hasHintText) {
+      return;
+    }
+
+    return (
+      <div class="checkbox-bottom">
+        <div id={helperTextId} class="helper-text" part="supporting-text helper-text" aria-live="polite">
+          {!isInvalid ? helperText : null}
+        </div>
+        <div id={errorTextId} class="error-text" part="supporting-text error-text" role="alert">
+          {isInvalid ? errorText : null}
+        </div>
+      </div>
+    );
+  }
 
   render() {
     const {
@@ -178,29 +340,48 @@ export class Checkbox implements ComponentInterface {
       name,
       value,
       alignment,
+      required,
     } = this;
     const mode = getIonMode(this);
     const path = getSVGPath(mode, indeterminate);
+    const inItem = hostContext('ion-item', el);
+    const inMultipleInputsItem = hostContext('ion-item.item-multiple-inputs', el);
 
     renderHiddenInput(true, el, name, checked ? value : '', disabled);
 
+    // The host element must have a checkbox role to ensure proper VoiceOver
+    // support in Safari for accessibility.
     return (
       <Host
+        role="checkbox"
         aria-checked={indeterminate ? 'mixed' : `${checked}`}
+        aria-describedby={this.hintTextId}
+        aria-invalid={this.isInvalid ? 'true' : undefined}
+        aria-labelledby={this.hasLabelContent ? this.inputLabelId : null}
+        aria-label={inheritedAttributes['aria-label'] || null}
+        aria-disabled={disabled ? 'true' : null}
+        aria-required={required ? 'true' : undefined}
+        tabindex={disabled ? undefined : 0}
+        onKeyDown={this.onKeyDown}
+        onFocus={this.onFocus}
+        onBlur={this.onBlur}
+        onClick={this.onClick}
         class={createColorClasses(color, {
           [mode]: true,
-          'in-item': hostContext('ion-item', el),
+          'in-item': inItem,
           'checkbox-checked': checked,
           'checkbox-disabled': disabled,
           'checkbox-indeterminate': indeterminate,
           interactive: true,
-          [`checkbox-justify-${justify}`]: true,
-          [`checkbox-alignment-${alignment}`]: true,
+          // A single-input item has the input cover and draws the indicator itself.
+          // A multi-input item has no cover, so each control draws its own.
+          'ion-focusable': !inItem || inMultipleInputsItem,
+          [`checkbox-justify-${justify}`]: justify !== undefined,
+          [`checkbox-alignment-${alignment}`]: alignment !== undefined,
           [`checkbox-label-placement-${labelPlacement}`]: true,
         })}
-        onClick={this.onClick}
       >
-        <label class="checkbox-wrapper">
+        <label class="checkbox-wrapper" htmlFor={inputId}>
           {/*
             The native control must be rendered
             before the visible label text due to https://bugs.webkit.org/show_bug.cgi?id=251951
@@ -211,22 +392,23 @@ export class Checkbox implements ComponentInterface {
             disabled={disabled}
             id={inputId}
             onChange={this.toggleChecked}
-            onFocus={() => this.onFocus()}
-            onBlur={() => this.onBlur()}
-            ref={(focusEl) => (this.focusEl = focusEl)}
+            required={required}
             {...inheritedAttributes}
           />
           <div
             class={{
               'label-text-wrapper': true,
-              'label-text-wrapper-hidden': el.textContent === '',
+              'label-text-wrapper-hidden': !this.hasLabelContent,
             }}
             part="label"
+            id={this.inputLabelId}
+            onClick={this.onDivLabelClick}
           >
             <slot></slot>
+            {this.renderHintText()}
           </div>
           <div class="native-wrapper">
-            <svg class="checkbox-icon" viewBox="0 0 24 24" part="container">
+            <svg class="checkbox-icon" viewBox="0 0 24 24" part="container" aria-hidden="true">
               {path}
             </svg>
           </div>

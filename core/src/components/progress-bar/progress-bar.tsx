@@ -1,6 +1,7 @@
 import type { ComponentInterface } from '@stencil/core';
-import { Component, Host, Prop, h } from '@stencil/core';
+import { Component, Element, Host, Prop, h } from '@stencil/core';
 import { clamp } from '@utils/helpers';
+import { isRTL } from '@utils/rtl';
 import { createColorClasses } from '@utils/theme';
 
 import { config } from '../../global/config';
@@ -24,6 +25,8 @@ import type { Color } from '../../interface';
   shadow: true,
 })
 export class ProgressBar implements ComponentInterface {
+  @Element() el!: HTMLElement;
+
   /**
    * The state of the progress bar, based on if the time the process takes is known or not.
    * Default options are: `"determinate"` (no animation), `"indeterminate"` (animate from left to right).
@@ -56,7 +59,7 @@ export class ProgressBar implements ComponentInterface {
   @Prop({ reflect: true }) color?: Color;
 
   render() {
-    const { color, type, reversed, value, buffer } = this;
+    const { color, type, reversed, value, buffer, el } = this;
     const paused = config.getBoolean('_testing');
     const mode = getIonMode(this);
     // If the progress is displayed as a solid bar.
@@ -71,7 +74,7 @@ export class ProgressBar implements ComponentInterface {
           [mode]: true,
           [`progress-bar-${type}`]: true,
           'progress-paused': paused,
-          'progress-bar-reversed': document.dir === 'rtl' ? !reversed : reversed,
+          'progress-bar-reversed': isRTL(el) ? !reversed : reversed,
           'progress-bar-solid': progressSolid,
         })}
       >
@@ -107,6 +110,7 @@ const renderProgress = (value: number, buffer: number) => {
      * When finalBuffer === 1, we use display: none
      * instead of removing the element to avoid flickering.
      */
+    // TODO(FW-6697): change `ion-hide` class to `ion-display-none` or another class
     <div
       class={{ 'buffer-circles-container': true, 'ion-hide': finalBuffer === 1 }}
       style={{ transform: `translateX(${finalBuffer * 100}%)` }}
